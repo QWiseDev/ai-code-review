@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity
 import hashlib
@@ -65,11 +65,24 @@ def health_check():
 
 @api_app.route('/')
 def home():
-    return """<h2>The code review api server is running.</h2>
-              <p>GitHub project address: <a href="https://github.com/sunmh207/AI-Codereview-Gitlab" target="_blank">
-              https://github.com/sunmh207/AI-Codereview-Gitlab</a></p>
-              <p>Gitee project address: <a href="https://gitee.com/sunminghui/ai-codereview-gitlab" target="_blank">https://gitee.com/sunminghui/ai-codereview-gitlab</a></p>
-              """
+    """Serve the frontend index.html"""
+    try:
+        return send_from_directory('/app/frontend/dist', 'index.html')
+    except:
+        return """<h2>The code review api server is running.</h2>
+                  <p>GitHub project address: <a href="https://github.com/sunmh207/AI-Codereview-Gitlab" target="_blank">
+                  https://github.com/sunmh207/AI-Codereview-Gitlab</a></p>
+                  <p>Gitee project address: <a href="https://gitee.com/sunminghui/ai-codereview-gitlab" target="_blank">https://gitee.com/sunminghui/ai-codereview-gitlab</a></p>
+                  """
+
+@api_app.route('/<path:filename>')
+def serve_static(filename):
+    """Serve static files from frontend dist directory"""
+    try:
+        return send_from_directory('/app/frontend/dist', filename)
+    except:
+        # If file not found, serve index.html for SPA routing
+        return send_from_directory('/app/frontend/dist', 'index.html')
 
 
 @api_app.route('/review/daily_report', methods=['GET'])

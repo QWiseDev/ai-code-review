@@ -66,6 +66,21 @@ docker-compose up -d
 docker-compose logs -f
 ```
 
+> 📖 **详细的Docker部署指南**: 查看 [Docker部署文档](doc/DOCKER_DEPLOYMENT.md) 了解完整的镜像构建、版本发布和部署流程。
+
+#### 使用预构建镜像
+
+```bash
+# 使用最新版本
+docker run -d \
+  --name ai-code-review \
+  -p 5001:5001 \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/log:/app/log \
+  --env-file ./conf/.env \
+  ghcr.io/qwisedev/ai-code-review:latest
+```
+
 ## 📁 项目结构
 
 ```

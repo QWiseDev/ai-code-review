@@ -1,11 +1,8 @@
 version: '3.8'
 
 services:
+  # 使用预构建镜像（推荐）
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: app
     image: ghcr.io/qwisedev/ai-code-review:latest
     ports:
       - "5001:5001"
@@ -15,3 +12,20 @@ services:
     env_file:
       - ./conf/.env
     restart: unless-stopped
+
+  # 本地构建版本（开发用）
+  app-build:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: app
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./data:/app/data
+      - ./log:/app/log
+    env_file:
+      - ./conf/.env
+    restart: unless-stopped
+    profiles:
+      - build
