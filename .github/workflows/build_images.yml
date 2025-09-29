@@ -55,12 +55,14 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}
+          images: ghcr.io/qwisedev/ai-code-review
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=edge,branch=main
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
 
       # Build and push multi-arch Docker image
       - name: Build and push Docker image (Multi-Arch)
@@ -68,6 +70,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          target: app
           push: true
           platforms: linux/amd64,linux/arm64/v8
           tags: ${{ steps.meta.outputs.tags }}
