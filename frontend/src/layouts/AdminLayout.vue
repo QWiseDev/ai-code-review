@@ -27,6 +27,11 @@
           <el-icon><Monitor /></el-icon>
           <template #title>仪表盘</template>
         </el-menu-item>
+
+        <el-menu-item index="/admin/projects">
+          <el-icon><List /></el-icon>
+          <template #title>项目管理</template>
+        </el-menu-item>
         
         <el-sub-menu index="reviews">
           <template #title>
@@ -109,7 +114,7 @@ import { useAuthStore } from '@/stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Service, Expand, Fold, Monitor, Document, TrendCharts, Setting,
-  UserFilled, User, ArrowDown, SwitchButton, Upload, FolderOpened
+  UserFilled, User, ArrowDown, SwitchButton, Upload, FolderOpened, List
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -129,6 +134,7 @@ const breadcrumbs = computed(() => {
   const breadcrumbMap: Record<string, string> = {
     'admin': '管理后台',
     'dashboard': '仪表盘',
+    'projects': '项目管理',
     'reviews': '代码审查',
     'mr': '合并请求',
     'push': '代码推送',

@@ -36,18 +36,25 @@ GitLab 默认禁止 Webhooks 访问本地网络地址。
 
 ### 如何让不同项目的消息发送到不同的群？
 
-**解决方案**
+**推荐方式（前端配置）**
 
-在项目的 .env 文件中，配置不同项目的群机器人的 Webhook 地址。
-以 DingTalk 为例，配置如下：
+1. 登录管理后台 → 系统设置 → 项目 Webhook 配置。
+2. 点击“添加项目配置”，填写项目名称（或 URL Slug）以及钉钉、企业微信、飞书、自定义 Webhook 地址。
+3. 根据需要开启/关闭对应渠道的开关并保存。
+
+> 提示：项目名称匹配优先，其次是 URL Slug。若某项目未配置或渠道关闭，将自动回退到默认配置。
+
+**兼容方式（环境变量）**
+
+仍兼容旧版按环境变量区分项目的方案。以 DingTalk 为例：
 
 ```
 DINGTALK_ENABLED=1
-#项目A的群机器人的Webhook地址
+# 项目 A 的群机器人的 Webhook 地址
 DINGTALK_WEBHOOK_URL_PROJECT_A=https://oapi.dingtalk.com/robot/send?access_token={access_token_of_project_a}
-#项目B的群机器人的Webhook地址
+# 项目 B 的群机器人的 Webhook 地址
 DINGTALK_WEBHOOK_URL_PROJECT_B=https://oapi.dingtalk.com/robot/send?access_token={access_token_of_project_b}
-#保留默认WEBHOOK_URL，发送日报或者其它项目将使用此URL
+# 默认 Webhook，用于未定义专属配置的项目或日报推送
 DINGTALK_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token={access_token}
 ```
 
@@ -55,20 +62,32 @@ DINGTALK_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token={access_t
 
 ### 如何让不同的Gitlab服务器的消息发送到不同的群？
 
-在项目的 .env 文件中，配置不同Gitlab服务器的群机器人的 Webhook 地址。
-以 DingTalk 为例，配置如下：
+**推荐方式（前端配置）**
+
+在系统设置 → 项目 Webhook 配置中，新增一条配置并填写 `URL 标识`（例如 `example_gitlab_com`），即可按服务器维度匹配。
+
+**兼容方式（环境变量）**
+
+依旧支持环境变量方式。以 DingTalk 为例：
 
 ```
 DINGTALK_ENABLED=1
-# Gitlab服务器A(http://192.168.30.164)的群机器人的Webhook地址
+# GitLab 服务器 A(http://192.168.30.164) 的群机器人 Webhook 地址
 DINGTALK_WEBHOOK_192_168_30_164=https://oapi.dingtalk.com/robot/send?access_token={access_token_of_gitlab_server_a}
-# Gitlab服务器B(http://example.gitlab.com)的群机器人的Webhook地址
+# GitLab 服务器 B(http://example.gitlab.com) 的群机器人 Webhook 地址
 DINGTALK_WEBHOOK_example_gitlab_com=https://oapi.dingtalk.com/robot/send?access_token={access_token_of_gitlab_server_b}
 ```
 
 飞书和企业微信的配置方式类似。
 
 **优先级：** 优先根据仓库名称匹配webhook地址，其次根据Gitlab服务器地址匹配webhook地址，如果都没有匹配到，则最后使用默认服务器地址
+
+### 如何以项目维度查看审查记录与 Webhook？
+
+1. 登录管理后台 → 左侧菜单选择“项目管理”。
+2. 在左侧项目列表中选择目标项目，可查看该项目的合并请求/代码推送审查记录、最近审查时间等信息。
+3. 在详情区点击“配置/编辑 Webhook”可直接维护该项目的钉钉、企业微信、飞书及自定义 Webhook 设置。
+4. 支持通过搜索框按项目名称或 URL 标识过滤项目；若需批量维护配置仍可前往“系统设置 → 项目 Webhook 配置”页。
 
 ### docker 容器部署时，连接Ollama失败
 
@@ -159,4 +178,3 @@ WORKER_QUEUE=gitlab_test_cn
   ```
   GITHUB_ACCESS_TOKEN=your-access-token  #替换为你的Access Token
   ```
-

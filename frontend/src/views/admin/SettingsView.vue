@@ -54,6 +54,70 @@
         </el-card>
       </el-col>
       
+      <!-- 项目Webhook配置 -->
+      <el-col :xs="24" :lg="24">
+        <el-card class="settings-card project-webhook-card">
+          <template #header>
+            <div class="card-header">
+              <el-icon><Bell /></el-icon>
+              <span>项目Webhook配置</span>
+              <el-button type="primary" size="small" @click="showAddProjectDialog" style="margin-left: auto;">
+                添加项目配置
+              </el-button>
+            </div>
+          </template>
+
+          <!-- 项目列表 -->
+          <el-table :data="projectWebhookConfigs" v-loading="loadingConfigs" style="width: 100%">
+            <el-table-column prop="project_name" label="项目名称" width="200" />
+            <el-table-column prop="url_slug" label="URL标识" width="180" />
+            <el-table-column label="钉钉" width="80">
+              <template #default="scope">
+                <el-tag :type="scope.row.dingtalk_enabled ? 'success' : 'info'" size="small">
+                  {{ scope.row.dingtalk_enabled ? '启用' : '禁用' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="企业微信" width="80">
+              <template #default="scope">
+                <el-tag :type="scope.row.wecom_enabled ? 'success' : 'info'" size="small">
+                  {{ scope.row.wecom_enabled ? '启用' : '禁用' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="飞书" width="80">
+              <template #default="scope">
+                <el-tag :type="scope.row.feishu_enabled ? 'success' : 'info'" size="small">
+                  {{ scope.row.feishu_enabled ? '启用' : '禁用' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="自定义" width="80">
+              <template #default="scope">
+                <el-tag :type="scope.row.extra_webhook_enabled ? 'success' : 'info'" size="small">
+                  {{ scope.row.extra_webhook_enabled ? '启用' : '禁用' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="更新时间" width="150">
+              <template #default="scope">
+                {{ formatTimestamp(scope.row.updated_at) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="150" fixed="right">
+              <template #default="scope">
+                <el-button type="primary" size="small" @click="editProjectConfig(scope.row)">
+                  编辑
+                </el-button>
+                <el-button type="danger" size="small" @click="deleteProjectConfig(scope.row.project_name)">
+                  删除
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+      </el-col>
+
       <!-- 通知设置 -->
       <el-col :xs="24" :lg="12">
         <el-card class="settings-card">
@@ -216,17 +280,103 @@
       </el-descriptions>
     </el-card>
   </div>
+
+  <ProjectWebhookDialog
+    v-model:visible="webhookDialogVisible"
+    :mode="webhookDialogMode"
+    :initial-config="editingProjectConfig"
+    @saved="handleWebhookSaved"
+  />
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Setting, Bell, DocumentChecked, Lock, InfoFilled
 } from '@element-plus/icons-vue'
+import {
+  fetchProjectWebhookConfigs,
+  removeProjectWebhookConfig,
+  type ProjectWebhookConfig
+} from '@/api/settings'
+import ProjectWebhookDialog from '@/components/ProjectWebhookDialog.vue'
 
 // 数据状态
 const saving = ref(false)
+const projectWebhookConfigs = ref<ProjectWebhookConfig[]>([])
+const loadingConfigs = ref(false)
+const webhookDialogVisible = ref(false)
+const webhookDialogMode = ref<'create' | 'edit'>('create')
+const editingProjectConfig = ref<ProjectWebhookConfig | null>(null)
+
+const loadProjectWebhookConfigs = async () => {
+  loadingConfigs.value = true
+  try {
+    const configs = await fetchProjectWebhookConfigs()
+    projectWebhookConfigs.value = configs.map((item) => ({
+      ...item,
+      dingtalk_enabled: item.dingtalk_enabled ?? 0,
+      wecom_enabled: item.wecom_enabled ?? 0,
+      feishu_enabled: item.feishu_enabled ?? 0,
+      extra_webhook_enabled: item.extra_webhook_enabled ?? 0
+    }))
+  } catch (error) {
+    ElMessage.error('加载项目Webhook配置失败')
+  } finally {
+    loadingConfigs.value = false
+  }
+}
+
+const showAddProjectDialog = () => {
+  webhookDialogMode.value = 'create'
+  editingProjectConfig.value = null
+  webhookDialogVisible.value = true
+}
+
+const editProjectConfig = (config: ProjectWebhookConfig) => {
+  webhookDialogMode.value = 'edit'
+  editingProjectConfig.value = { ...config }
+  webhookDialogVisible.value = true
+}
+
+const deleteProjectConfig = async (projectName: string) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除项目 ${projectName} 的Webhook配置吗？`,
+      '删除确认',
+      {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消'
+      }
+    )
+    await removeProjectWebhookConfig(projectName)
+    ElMessage.success('删除成功')
+    await loadProjectWebhookConfigs()
+  } catch (error: any) {
+    if (error === 'cancel' || error === 'close' || error?.message === 'cancel' || error?.message === 'close') {
+      return
+    }
+  }
+}
+
+const handleWebhookSaved = async () => {
+  await loadProjectWebhookConfigs()
+}
+
+const formatTimestamp = (timestamp?: number | null) => {
+  if (!timestamp) {
+    return '-'
+  }
+  const date = new Date(timestamp * 1000)
+  if (Number.isNaN(date.getTime())) {
+    return '-'
+  }
+
+  const pad = (value: number) => value.toString().padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
 
 // 基本设置
 const basicSettings = reactive({
@@ -349,6 +499,7 @@ const updateSystemInfo = () => {
 onMounted(() => {
   loadSettings()
   updateSystemInfo()
+  loadProjectWebhookConfigs()
   
   // 每分钟更新一次系统信息
   setInterval(updateSystemInfo, 60000)

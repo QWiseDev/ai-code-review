@@ -540,6 +540,122 @@ def get_metadata():
         return jsonify({'message': 'Failed to get metadata'}), 500
 
 
+@api_app.route('/api/project-webhook-config', methods=['GET'])
+@jwt_required()
+def get_project_webhook_configs():
+    """获取项目webhook配置列表"""
+    try:
+        project_name = request.args.get('project_name')
+        project_name = project_name.strip() if project_name else None
+        url_slug = request.args.get('url_slug')
+        url_slug = url_slug.strip() if url_slug else None
+
+        configs = ReviewService.get_project_webhook_config(project_name=project_name, url_slug=url_slug)
+
+        return jsonify({
+            'success': True,
+            'data': configs
+        }), 200
+    except Exception as e:
+        logger.error(f"Get project webhook configs error: {e}")
+        return jsonify({'success': False, 'message': 'Failed to get project webhook configs'}), 500
+
+
+@api_app.route('/api/project-webhook-config', methods=['POST'])
+@jwt_required()
+def create_or_update_project_webhook_config():
+    """创建或更新项目webhook配置"""
+    try:
+        data = request.get_json()
+
+        # 验证必填字段
+        project_name = (data.get('project_name') or '').strip()
+        if not project_name:
+            return jsonify({'success': False, 'message': 'Project name is required'}), 400
+
+        url_slug = (data.get('url_slug') or '').strip() or None
+
+        # 转换enabled字段为整数
+        for field in ['dingtalk_enabled', 'wecom_enabled', 'feishu_enabled', 'extra_webhook_enabled']:
+            if field in data:
+                data[field] = int(data[field]) if data[field] is not None else 0
+
+        ReviewService.upsert_project_webhook_config(
+            project_name=project_name,
+            url_slug=url_slug,
+            dingtalk_webhook_url=data.get('dingtalk_webhook_url'),
+            wecom_webhook_url=data.get('wecom_webhook_url'),
+            feishu_webhook_url=data.get('feishu_webhook_url'),
+            extra_webhook_url=data.get('extra_webhook_url'),
+            dingtalk_enabled=data.get('dingtalk_enabled', 0),
+            wecom_enabled=data.get('wecom_enabled', 0),
+            feishu_enabled=data.get('feishu_enabled', 0),
+            extra_webhook_enabled=data.get('extra_webhook_enabled', 0)
+        )
+
+        return jsonify({'success': True, 'message': 'Project webhook config saved successfully'}), 200
+    except ValueError as e:
+        logger.warning(f"Save project webhook config validation error: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Save project webhook config error: {e}")
+        return jsonify({'success': False, 'message': 'Failed to save project webhook config'}), 500
+
+
+@api_app.route('/api/project-webhook-config/<project_name>', methods=['DELETE'])
+@jwt_required()
+def delete_project_webhook_config(project_name):
+    """删除项目webhook配置"""
+    try:
+        normalized_project_name = (project_name or '').strip()
+        if not normalized_project_name:
+            return jsonify({'success': False, 'message': 'Project name is required'}), 400
+
+        success = ReviewService.delete_project_webhook_config(normalized_project_name)
+
+        if success:
+            return jsonify({'success': True, 'message': 'Project webhook config deleted successfully'}), 200
+        else:
+            return jsonify({'success': False, 'message': 'Project webhook config not found'}), 404
+    except Exception as e:
+        logger.error(f"Delete project webhook config error: {e}")
+        return jsonify({'success': False, 'message': 'Failed to delete project webhook config'}), 500
+
+
+@api_app.route('/api/projects', methods=['GET'])
+@jwt_required()
+def get_projects_overview():
+    """获取项目管理概览列表"""
+    try:
+        search = request.args.get('search')
+        overview = ReviewService.get_project_overview(search=search)
+        return jsonify({'success': True, 'data': overview}), 200
+    except Exception as e:
+        logger.error(f"Get projects overview error: {e}")
+        return jsonify({'success': False, 'message': 'Failed to get projects overview'}), 500
+
+
+@api_app.route('/api/projects/<project_name>/summary', methods=['GET'])
+@jwt_required()
+def get_project_summary(project_name):
+    """获取指定项目的审查与 webhook 概览"""
+    try:
+        normalized_project_name = (project_name or '').strip()
+        if not normalized_project_name:
+            return jsonify({'success': False, 'message': 'Project name is required'}), 400
+
+        summary = ReviewService.get_project_summary(normalized_project_name)
+        if summary is None:
+            return jsonify({'success': False, 'message': 'Project not found'}), 404
+        return jsonify({'success': True, 'data': summary}), 200
+    except ValueError as e:
+        logger.warning(f"Get project summary validation error: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Get project summary error: {e}")
+        return jsonify({'success': False, 'message': 'Failed to get project summary'}), 500
+
+
 def setup_scheduler():
     """
     配置并启动定时任务调度器

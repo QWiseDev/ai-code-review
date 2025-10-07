@@ -1,6 +1,8 @@
-import os
-from biz.utils.log import logger
 import requests
+import os
+
+from biz.service.review_service import ReviewService
+from biz.utils.log import logger
 
 
 class ExtraWebhookNotifier:
@@ -23,18 +25,43 @@ class ExtraWebhookNotifier:
             return
 
         try:
+            raw_project_name = system_data.get("project_name") if system_data else None
+            raw_url_slug = system_data.get("url_slug") if system_data else None
+            normalized_project_name = (raw_project_name or '').strip() or None
+            normalized_url_slug = (raw_url_slug or '').strip() or None
+            project_config = ReviewService.get_effective_project_webhook_config(
+                project_name=normalized_project_name,
+                url_slug=normalized_url_slug
+            )
+            identifier = normalized_project_name or normalized_url_slug or "unknown"
+
+            if project_config:
+                if not project_config.get('extra_webhook_enabled'):
+                    logger.info(f"项目 {identifier} 未启用自定义Webhook推送，跳过发送。")
+                    return
+                target_url = (project_config.get('extra_webhook_url') or '').strip()
+                if not target_url:
+                    logger.warning(f"项目 {identifier} 已启用自定义Webhook推送但未配置 webhook 地址，跳过发送。")
+                    return
+            else:
+                target_url = self.default_webhook_url
+
+            if not target_url:
+                logger.info("未找到可用的自定义Webhook地址，跳过发送。")
+                return
+
             data = {
                 "ai_codereview_data": system_data,
                 "webhook_data": webhook_data
             }
             response = requests.post(
-                url=self.default_webhook_url,
+                url=target_url,
                 json=data,
                 headers={'Content-Type': 'application/json'}
             )
 
             if response.status_code != 200:
-                logger.error(f"ExtraWebhook消息发送失败! webhook_url:{self.default_webhook_url}, error_msg:{response.text}")
+                logger.error(f"ExtraWebhook消息发送失败! webhook_url:{target_url}, error_msg:{response.text}")
                 return
 
         except Exception as e:

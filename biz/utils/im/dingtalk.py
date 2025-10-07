@@ -8,6 +8,8 @@ import urllib.parse
 
 import requests
 
+from biz.service.review_service import ReviewService
+
 from biz.utils.log import logger
 
 
@@ -16,9 +18,18 @@ class DingTalkNotifier:
         self.enabled = os.environ.get('DINGTALK_ENABLED', '0') == '1'
         self.default_webhook_url = webhook_url or os.environ.get('DINGTALK_WEBHOOK_URL')
 
+    def _get_project_config(self, project_name=None, url_slug=None):
+        """从数据库获取项目 webhook 配置"""
+        normalized_project_name = (project_name or '').strip() or None
+        normalized_url_slug = (url_slug or '').strip() or None
+        return ReviewService.get_effective_project_webhook_config(
+            project_name=normalized_project_name,
+            url_slug=normalized_url_slug
+        )
+
     def _get_webhook_url(self, project_name=None, url_slug=None):
         """
-        获取项目对应的 Webhook URL
+        从环境变量获取项目对应的 Webhook URL（兼容旧方案）
         :param project_name: 项目名称
         :param url_slug: 由 gitlab 项目的 url 转换而来的 slug
         :return: Webhook URL
@@ -56,7 +67,19 @@ class DingTalkNotifier:
             return
 
         try:
-            post_url = self._get_webhook_url(project_name=project_name, url_slug=url_slug)
+            project_config = self._get_project_config(project_name=project_name, url_slug=url_slug)
+            identifier = (project_name or '').strip() or (url_slug or '').strip() or "unknown"
+            if project_config:
+                if not project_config.get('dingtalk_enabled'):
+                    logger.info(f"项目 {identifier} 未启用钉钉推送，跳过发送。")
+                    return
+                post_url = (project_config.get('dingtalk_webhook_url') or '').strip()
+                if not post_url:
+                    logger.warning(f"项目 {identifier} 已启用钉钉推送但未配置 webhook 地址，跳过发送。")
+                    return
+            else:
+                post_url = self._get_webhook_url(project_name=project_name, url_slug=url_slug)
+
             headers = {
                 "Content-Type": "application/json",
                 "Charset": "UTF-8"
