@@ -84,6 +84,7 @@ class DingTalkNotifier:
                 "Content-Type": "application/json",
                 "Charset": "UTF-8"
             }
+            content = content.replace("https://gitserver.gisinfo.com/", "https://gitserver.gisinfo.com:8443/")
             if msg_type == 'markdown':
                 message = {
                     "msgtype": "markdown",
