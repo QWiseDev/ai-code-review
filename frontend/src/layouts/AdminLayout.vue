@@ -33,6 +33,11 @@
           <template #title>项目管理</template>
         </el-menu-item>
         
+        <el-menu-item index="/admin/teams">
+          <el-icon><User /></el-icon>
+          <template #title>团队管理</template>
+        </el-menu-item>
+        
         <el-sub-menu index="reviews">
           <template #title>
             <el-icon><Document /></el-icon>
@@ -135,6 +140,7 @@ const breadcrumbs = computed(() => {
     'admin': '管理后台',
     'dashboard': '仪表盘',
     'projects': '项目管理',
+    'teams': '团队管理',
     'reviews': '代码审查',
     'mr': '合并请求',
     'push': '代码推送',

@@ -1,4 +1,5 @@
 import sqlite3
+from typing import Dict, List, Optional
 
 import pandas as pd
 
@@ -13,6 +14,7 @@ class ReviewService:
         """初始化数据库及表结构"""
         try:
             with sqlite3.connect(ReviewService.DB_FILE) as conn:
+                conn.execute('PRAGMA foreign_keys = ON;')
                 cursor = conn.cursor()
                 cursor.execute('''
                         CREATE TABLE IF NOT EXISTS mr_review_log (
@@ -98,6 +100,31 @@ class ReviewService:
                 # 创建索引
                 conn.execute('CREATE INDEX IF NOT EXISTS idx_project_webhook_config_project_name ON project_webhook_config (project_name);')
                 conn.execute('CREATE INDEX IF NOT EXISTS idx_project_webhook_config_url_slug ON project_webhook_config (url_slug);')
+
+                # 创建团队及成员关系表
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS teams (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT UNIQUE NOT NULL,
+                        webhook_url TEXT,
+                        description TEXT,
+                        created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                        updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+                    )
+                ''')
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS team_members (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        team_id INTEGER NOT NULL,
+                        author TEXT NOT NULL UNIQUE,
+                        created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                        FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE CASCADE
+                    )
+                ''')
+
+                conn.execute('CREATE INDEX IF NOT EXISTS idx_teams_name ON teams (name);')
+                conn.execute('CREATE INDEX IF NOT EXISTS idx_team_members_team_id ON team_members (team_id);')
+                conn.execute('CREATE INDEX IF NOT EXISTS idx_team_members_author ON team_members (author);')
         except sqlite3.DatabaseError as e:
             print(f"Database initialization failed: {e}")
 
@@ -519,6 +546,350 @@ class ReviewService:
         except sqlite3.DatabaseError as e:
             print(f"Error deleting project webhook config: {e}")
             return False
+
+    # ---------------------- 团队管理相关方法 ---------------------- #
+
+    @staticmethod
+    def _format_team_record(row) -> Dict:
+        """将团队记录转换为字典"""
+        if row is None:
+            return {}
+        if isinstance(row, sqlite3.Row):
+            row_dict = dict(row)
+        else:
+            columns = ['id', 'name', 'webhook_url', 'description', 'created_at', 'updated_at']
+            row_dict = dict(zip(columns, row))
+        return {
+            'id': row_dict.get('id'),
+            'name': row_dict.get('name'),
+            'webhook_url': row_dict.get('webhook_url'),
+            'description': row_dict.get('description'),
+            'created_at': row_dict.get('created_at'),
+            'updated_at': row_dict.get('updated_at'),
+        }
+
+    @staticmethod
+    def _get_team_members_map(conn, team_ids: List[int]) -> Dict[int, List[str]]:
+        """批量获取团队成员映射"""
+        if not team_ids:
+            return {}
+        placeholders = ','.join(['?'] * len(team_ids))
+        cursor = conn.cursor()
+        cursor.execute(
+            f'''
+            SELECT team_id, author
+            FROM team_members
+            WHERE team_id IN ({placeholders})
+            ORDER BY author
+            ''',
+            team_ids
+        )
+        result: Dict[int, List[str]] = {}
+        for team_id, author in cursor.fetchall():
+            result.setdefault(team_id, []).append(author)
+        return result
+
+    @staticmethod
+    def create_team(name: str, webhook_url: Optional[str] = None, description: Optional[str] = None) -> Optional[Dict]:
+        """创建团队"""
+        normalized_name = (name or '').strip()
+        if not normalized_name:
+            raise ValueError("团队名称不能为空。")
+        sanitized_webhook = (webhook_url or '').strip() or None
+        sanitized_description = (description or '').strip() or None
+
+        try:
+            with sqlite3.connect(ReviewService.DB_FILE) as conn:
+                conn.execute('PRAGMA foreign_keys = ON;')
+                cursor = conn.cursor()
+                cursor.execute(
+                    '''
+                    INSERT INTO teams (name, webhook_url, description, created_at, updated_at)
+                    VALUES (?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now'))
+                    ''',
+                    (normalized_name, sanitized_webhook, sanitized_description)
+                )
+                team_id = cursor.lastrowid
+                conn.commit()
+                return ReviewService.get_team(team_id, include_members=True)
+        except sqlite3.IntegrityError:
+            raise ValueError(f"团队名称“{normalized_name}”已存在。")
+        except sqlite3.DatabaseError as e:
+            print(f"Error creating team: {e}")
+            return None
+
+    @staticmethod
+    def update_team(team_id: int, name: Optional[str] = None, webhook_url: Optional[str] = None,
+                    description: Optional[str] = None) -> Optional[Dict]:
+        """更新团队信息"""
+        if not team_id:
+            raise ValueError("团队ID不能为空。")
+
+        fields = []
+        params: List = []
+
+        if name is not None:
+            normalized_name = (name or '').strip()
+            if not normalized_name:
+                raise ValueError("团队名称不能为空。")
+            fields.append('name = ?')
+            params.append(normalized_name)
+
+        if webhook_url is not None:
+            sanitized_webhook = (webhook_url or '').strip() or None
+            fields.append('webhook_url = ?')
+            params.append(sanitized_webhook)
+
+        if description is not None:
+            sanitized_description = (description or '').strip() or None
+            fields.append('description = ?')
+            params.append(sanitized_description)
+
+        if not fields:
+            return ReviewService.get_team(team_id, include_members=True)
+
+        fields.append("updated_at = strftime('%s', 'now')")
+
+        try:
+            with sqlite3.connect(ReviewService.DB_FILE) as conn:
+                conn.execute('PRAGMA foreign_keys = ON;')
+                cursor = conn.cursor()
+                set_clause = ', '.join(fields)
+                cursor.execute(
+                    f'''
+                    UPDATE teams
+                    SET {set_clause}
+                    WHERE id = ?
+                    ''',
+                    (*params, team_id)
+                )
+                if cursor.rowcount == 0:
+                    return None
+                conn.commit()
+                return ReviewService.get_team(team_id, include_members=True)
+        except sqlite3.IntegrityError:
+            if name is not None:
+                normalized_name = (name or '').strip()
+                raise ValueError(f"团队名称“{normalized_name}”已存在。")
+            raise
+        except sqlite3.DatabaseError as e:
+            print(f"Error updating team: {e}")
+            return None
+
+    @staticmethod
+    def delete_team(team_id: int) -> bool:
+        """删除团队（自动删除成员关联）"""
+        try:
+            with sqlite3.connect(ReviewService.DB_FILE) as conn:
+                conn.execute('PRAGMA foreign_keys = ON;')
+                cursor = conn.cursor()
+                cursor.execute(
+                    '''
+                    DELETE FROM teams WHERE id = ?
+                    ''',
+                    (team_id,)
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+        except sqlite3.DatabaseError as e:
+            print(f"Error deleting team: {e}")
+            return False
+
+    @staticmethod
+    def get_team(team_id: int, include_members: bool = False) -> Optional[Dict]:
+        """根据ID查询团队"""
+        if not team_id:
+            raise ValueError("团队ID不能为空。")
+        try:
+            with sqlite3.connect(ReviewService.DB_FILE) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute('PRAGMA foreign_keys = ON;')
+                cursor = conn.cursor()
+                cursor.execute(
+                    '''
+                    SELECT id, name, webhook_url, description, created_at, updated_at
+                    FROM teams
+                    WHERE id = ?
+                    ''',
+                    (team_id,)
+                )
+                row = cursor.fetchone()
+                if not row:
+                    return None
+                team = ReviewService._format_team_record(row)
+                if include_members:
+                    member_map = ReviewService._get_team_members_map(conn, [team_id])
+                    team['members'] = member_map.get(team_id, [])
+                return team
+        except sqlite3.DatabaseError as e:
+            print(f"Error retrieving team: {e}")
+            return None
+
+    @staticmethod
+    def list_teams(include_members: bool = False) -> List[Dict]:
+        """获取团队列表"""
+        try:
+            with sqlite3.connect(ReviewService.DB_FILE) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute('PRAGMA foreign_keys = ON;')
+                cursor = conn.cursor()
+                cursor.execute(
+                    '''
+                    SELECT id, name, webhook_url, description, created_at, updated_at
+                    FROM teams
+                    ORDER BY name
+                    '''
+                )
+                rows = cursor.fetchall()
+                teams = [ReviewService._format_team_record(row) for row in rows]
+                if include_members and teams:
+                    member_map = ReviewService._get_team_members_map(conn, [team['id'] for team in teams])
+                    for team in teams:
+                        team['members'] = member_map.get(team['id'], [])
+                return teams
+        except sqlite3.DatabaseError as e:
+            print(f"Error retrieving team list: {e}")
+            return []
+
+    @staticmethod
+    def add_team_members(team_id: int, authors: List[str]) -> int:
+        """批量添加团队成员"""
+        if not team_id:
+            raise ValueError("团队ID不能为空。")
+        if not authors:
+            return 0
+
+        normalized_authors = []
+        for author in authors:
+            normalized = (author or '').strip()
+            if normalized:
+                normalized_authors.append(normalized)
+
+        if not normalized_authors:
+            return 0
+
+        try:
+            with sqlite3.connect(ReviewService.DB_FILE) as conn:
+                conn.execute('PRAGMA foreign_keys = ON;')
+                cursor = conn.cursor()
+                before_changes = conn.total_changes
+                cursor.executemany(
+                    '''
+                    INSERT INTO team_members (team_id, author, created_at)
+                    VALUES (?, ?, strftime('%s', 'now'))
+                    ON CONFLICT(author) DO UPDATE SET
+                        team_id = excluded.team_id
+                    ''',
+                    [(team_id, author) for author in normalized_authors]
+                )
+                conn.commit()
+                return conn.total_changes - before_changes
+        except sqlite3.DatabaseError as e:
+            print(f"Error adding team members: {e}")
+            return 0
+
+    @staticmethod
+    def remove_team_member(team_id: int, author: str) -> bool:
+        """移除团队成员"""
+        if not team_id:
+            raise ValueError("团队ID不能为空。")
+        normalized_author = (author or '').strip()
+        if not normalized_author:
+            return False
+        try:
+            with sqlite3.connect(ReviewService.DB_FILE) as conn:
+                conn.execute('PRAGMA foreign_keys = ON;')
+                cursor = conn.cursor()
+                cursor.execute(
+                    '''
+                    DELETE FROM team_members
+                    WHERE team_id = ? AND author = ?
+                    ''',
+                    (team_id, normalized_author)
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+        except sqlite3.DatabaseError as e:
+            print(f"Error removing team member: {e}")
+            return False
+
+    @staticmethod
+    def get_team_members(team_id: int) -> List[str]:
+        """获取团队成员列表"""
+        if not team_id:
+            raise ValueError("团队ID不能为空。")
+        try:
+            with sqlite3.connect(ReviewService.DB_FILE) as conn:
+                conn.execute('PRAGMA foreign_keys = ON;')
+                cursor = conn.cursor()
+                cursor.execute(
+                    '''
+                    SELECT author
+                    FROM team_members
+                    WHERE team_id = ?
+                    ORDER BY author
+                    ''',
+                    (team_id,)
+                )
+                return [row[0] for row in cursor.fetchall()]
+        except sqlite3.DatabaseError as e:
+            print(f"Error retrieving team members: {e}")
+            return []
+
+    @staticmethod
+    def get_author_team(author: str) -> Optional[Dict]:
+        """根据人员查询团队"""
+        normalized_author = (author or '').strip()
+        if not normalized_author:
+            return None
+        try:
+            with sqlite3.connect(ReviewService.DB_FILE) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute('PRAGMA foreign_keys = ON;')
+                cursor = conn.cursor()
+                cursor.execute(
+                    '''
+                    SELECT t.id, t.name, t.webhook_url, t.description, t.created_at, t.updated_at
+                    FROM team_members tm
+                    JOIN teams t ON tm.team_id = t.id
+                    WHERE tm.author = ?
+                    LIMIT 1
+                    ''',
+                    (normalized_author,)
+                )
+                row = cursor.fetchone()
+                return ReviewService._format_team_record(row) if row else None
+        except sqlite3.DatabaseError as e:
+            print(f"Error retrieving author team: {e}")
+            return None
+
+    @staticmethod
+    def get_author_team_mapping() -> Dict[str, Dict]:
+        """获取所有人员所属团队映射"""
+        try:
+            with sqlite3.connect(ReviewService.DB_FILE) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute('PRAGMA foreign_keys = ON;')
+                cursor = conn.cursor()
+                cursor.execute(
+                    '''
+                    SELECT tm.author, t.id, t.name, t.webhook_url, t.description
+                    FROM team_members tm
+                    JOIN teams t ON tm.team_id = t.id
+                    '''
+                )
+                mapping: Dict[str, Dict] = {}
+                for row in cursor.fetchall():
+                    mapping[row['author']] = {
+                        'id': row['id'],
+                        'name': row['name'],
+                        'webhook_url': row['webhook_url'],
+                        'description': row['description'],
+                    }
+                return mapping
+        except sqlite3.DatabaseError as e:
+            print(f"Error retrieving author team mapping: {e}")
+            return {}
 
 
 # Initialize database

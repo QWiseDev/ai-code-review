@@ -24,6 +24,7 @@ from biz.queue.worker import handle_merge_request_event, handle_push_event, hand
     handle_github_push_event
 from biz.service.review_service import ReviewService
 from biz.utils.im import notifier
+from biz.utils.im.team_webhook import TeamWebhookNotifier
 from biz.utils.log import logger
 from biz.utils.queue import handle_queue
 from biz.utils.reporter import Reporter
@@ -99,23 +100,91 @@ def daily_report():
 
         if df.empty:
             logger.info("No data to process.")
-            return jsonify({'message': 'No data to process.'}), 200
+            return jsonify({'success': True, 'message': 'No data to process.', 'data': {}}), 200
         # 去重：基于 (author, message) 组合
         df_unique = df.drop_duplicates(subset=["author", "commit_messages"])
         # 按照 author 排序
         df_sorted = df_unique.sort_values(by="author")
         # 转换为适合生成日报的格式
         commits = df_sorted.to_dict(orient="records")
-        # 生成日报内容
-        report_txt = Reporter().generate_report(json.dumps(commits))
-        # 发送钉钉通知
-        notifier.send_notification(content=report_txt, msg_type="markdown", title="代码提交日报")
+        team_mapping = ReviewService.get_author_team_mapping()
 
-        # 返回生成的日报内容
-        return json.dumps(report_txt, ensure_ascii=False, indent=4)
+        team_commits = {}
+        unassigned_commits = []
+        for record in commits:
+            author = (record.get('author') or '').strip()
+            team_info = team_mapping.get(author)
+            webhook_url = team_info.get('webhook_url') if team_info else None
+            if team_info and webhook_url:
+                team_id = team_info.get('id')
+                if team_id not in team_commits:
+                    team_commits[team_id] = {
+                        'team': team_info,
+                        'records': []
+                    }
+                team_commits[team_id]['records'].append(record)
+            else:
+                unassigned_commits.append(record)
+
+        reporter = Reporter()
+        team_reports_summary = []
+
+        for team_id, payload in team_commits.items():
+            team_info = payload['team']
+            team_name = team_info.get('name') or '未命名团队'
+            try:
+                team_report = reporter.generate_report(json.dumps(payload['records'], ensure_ascii=False))
+                sent = TeamWebhookNotifier.send_markdown(
+                    webhook_url=team_info.get('webhook_url'),
+                    title=f"{team_name} 工作日报",
+                    content=team_report
+                )
+                team_reports_summary.append({
+                    'team_id': team_id,
+                    'team_name': team_name,
+                    'member_count': len(payload['records']),
+                    'sent': sent,
+                    'report': team_report
+                })
+            except Exception as team_error:
+                logger.error("团队[%s]日报生成或推送失败: %s", team_name, team_error)
+                team_reports_summary.append({
+                    'team_id': team_id,
+                    'team_name': team_name,
+                    'member_count': len(payload['records']),
+                    'sent': False,
+                    'error': str(team_error)
+                })
+
+        fallback_commits = commits if not team_commits else unassigned_commits
+        fallback_report = None
+        fallback_sent = False
+
+        if fallback_commits:
+            try:
+                fallback_report = reporter.generate_report(json.dumps(fallback_commits, ensure_ascii=False))
+                notifier.send_notification(
+                    content=fallback_report,
+                    msg_type="markdown",
+                    title="代码提交日报"
+                )
+                fallback_sent = True
+            except Exception as fallback_error:
+                logger.error("日报生成或推送失败: %s", fallback_error)
+
+        response_payload = {
+            'total_records': len(commits),
+            'team_reports': team_reports_summary,
+            'unassigned_count': len(unassigned_commits),
+            'fallback_sent': fallback_sent
+        }
+        if fallback_report:
+            response_payload['fallback_report'] = fallback_report
+
+        return jsonify({'success': True, 'data': response_payload}), 200
     except Exception as e:
         logger.error(f"Failed to generate daily report: {e}")
-        return jsonify({'message': f"Failed to generate daily report: {e}"}), 500
+        return jsonify({'success': False, 'message': f"Failed to generate daily report: {e}"}), 500
 
 
 # Authentication endpoints
@@ -654,6 +723,137 @@ def get_project_summary(project_name):
     except Exception as e:
         logger.error(f"Get project summary error: {e}")
         return jsonify({'success': False, 'message': 'Failed to get project summary'}), 500
+
+
+@api_app.route('/api/teams', methods=['GET'])
+@jwt_required()
+def get_teams():
+    """获取团队列表"""
+    try:
+        include_members = request.args.get('include_members', '1') != '0'
+        teams = ReviewService.list_teams(include_members=include_members)
+        return jsonify({'success': True, 'data': teams}), 200
+    except Exception as e:
+        logger.error(f"Get teams error: {e}")
+        return jsonify({'success': False, 'message': 'Failed to get teams'}), 500
+
+
+@api_app.route('/api/teams/<int:team_id>', methods=['GET'])
+@jwt_required()
+def get_team_detail(team_id: int):
+    """获取团队详情"""
+    try:
+        include_members = request.args.get('include_members', '1') != '0'
+        team = ReviewService.get_team(team_id, include_members=include_members)
+        if not team:
+            return jsonify({'success': False, 'message': 'Team not found'}), 404
+        return jsonify({'success': True, 'data': team}), 200
+    except Exception as e:
+        logger.error(f"Get team detail error: {e}")
+        return jsonify({'success': False, 'message': 'Failed to get team detail'}), 500
+
+
+@api_app.route('/api/teams', methods=['POST'])
+@jwt_required()
+def create_team():
+    """创建团队"""
+    try:
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({'success': False, 'message': '团队名称不能为空'}), 400
+
+        team = ReviewService.create_team(
+            name=name,
+            webhook_url=data.get('webhook_url'),
+            description=data.get('description')
+        )
+        if not team:
+            return jsonify({'success': False, 'message': '团队创建失败'}), 500
+        return jsonify({'success': True, 'data': team}), 201
+    except ValueError as e:
+        logger.warning(f"Create team validation error: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Create team error: {e}")
+        return jsonify({'success': False, 'message': 'Failed to create team'}), 500
+
+
+@api_app.route('/api/teams/<int:team_id>', methods=['PUT'])
+@jwt_required()
+def update_team(team_id: int):
+    """更新团队信息"""
+    try:
+        data = request.get_json() or {}
+        team = ReviewService.update_team(
+            team_id=team_id,
+            name=data.get('name'),
+            webhook_url=data.get('webhook_url'),
+            description=data.get('description')
+        )
+        if not team:
+            return jsonify({'success': False, 'message': 'Team not found'}), 404
+        return jsonify({'success': True, 'data': team}), 200
+    except ValueError as e:
+        logger.warning(f"Update team validation error: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Update team error: {e}")
+        return jsonify({'success': False, 'message': 'Failed to update team'}), 500
+
+
+@api_app.route('/api/teams/<int:team_id>', methods=['DELETE'])
+@jwt_required()
+def delete_team(team_id: int):
+    """删除团队"""
+    try:
+        deleted = ReviewService.delete_team(team_id)
+        if not deleted:
+            return jsonify({'success': False, 'message': 'Team not found'}), 404
+        return jsonify({'success': True, 'message': 'Team deleted successfully'}), 200
+    except Exception as e:
+        logger.error(f"Delete team error: {e}")
+        return jsonify({'success': False, 'message': 'Failed to delete team'}), 500
+
+
+@api_app.route('/api/teams/<int:team_id>/members', methods=['POST'])
+@jwt_required()
+def add_team_members(team_id: int):
+    """批量添加团队成员"""
+    try:
+        data = request.get_json() or {}
+        authors = data.get('authors')
+        if not isinstance(authors, list):
+            return jsonify({'success': False, 'message': 'authors 字段必须为数组'}), 400
+        added = ReviewService.add_team_members(team_id, authors)
+        team = ReviewService.get_team(team_id, include_members=True)
+        if not team:
+            return jsonify({'success': False, 'message': 'Team not found'}), 404
+        return jsonify({'success': True, 'data': {'added': added, 'team': team}}), 200
+    except ValueError as e:
+        logger.warning(f"Add team members validation error: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Add team members error: {e}")
+        return jsonify({'success': False, 'message': 'Failed to add team members'}), 500
+
+
+@api_app.route('/api/teams/<int:team_id>/members/<author>', methods=['DELETE'])
+@jwt_required()
+def remove_team_member(team_id: int, author: str):
+    """移除团队成员"""
+    try:
+        removed = ReviewService.remove_team_member(team_id, author)
+        if not removed:
+            return jsonify({'success': False, 'message': '成员不存在或团队不存在'}), 404
+        team = ReviewService.get_team(team_id, include_members=True)
+        return jsonify({'success': True, 'data': team}), 200
+    except ValueError as e:
+        logger.warning(f"Remove team member validation error: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Remove team member error: {e}")
+        return jsonify({'success': False, 'message': 'Failed to remove team member'}), 500
 
 
 def setup_scheduler():
