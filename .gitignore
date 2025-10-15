@@ -240,4 +240,4 @@ data/
 frontend/dist/
 frontend/node_modules/
 frontend/.vite/
-frontend/.temp/
+frontend/.temp/.serena/
