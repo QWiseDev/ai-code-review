@@ -19,11 +19,43 @@ export interface ProjectOverview {
 
 export type ProjectSummary = ProjectOverview
 
-export const getProjectsOverview = async (search?: string): Promise<ProjectOverview[]> => {
-  const response = await apiClient.get<ApiResponse<ProjectOverview[]>>('/api/projects', {
-    params: search ? { search } : undefined
+export interface ProjectsOverviewResponse {
+  data: ProjectOverview[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+}
+
+interface ProjectsApiResponse {
+  success: boolean
+  data: ProjectOverview[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+  message?: string
+}
+
+export const getProjectsOverview = async (
+  search?: string,
+  page: number = 1,
+  pageSize: number = 20
+): Promise<ProjectsOverviewResponse> => {
+  const response = await apiClient.get<ProjectsApiResponse>('/api/projects', {
+    params: {
+      search: search || undefined,
+      page,
+      page_size: pageSize
+    }
   })
-  return response.data.data
+  return {
+    data: response.data.data,
+    total: response.data.total,
+    page: response.data.page,
+    page_size: response.data.page_size,
+    total_pages: response.data.total_pages
+  }
 }
 
 export const getProjectSummary = async (projectName: string): Promise<ProjectSummary> => {

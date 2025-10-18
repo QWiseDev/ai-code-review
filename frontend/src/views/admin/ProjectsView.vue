@@ -84,6 +84,18 @@
               </template>
             </el-table-column>
           </el-table>
+
+          <el-pagination
+            v-if="projectsTotal > 0"
+            class="projects-pagination"
+            :current-page="projectsPage"
+            :page-size="projectsPageSize"
+            :total="projectsTotal"
+            :page-sizes="[10, 20, 50, 100]"
+            layout="total, sizes, prev, pager, next, jumper"
+            @size-change="handleProjectsPageSizeChange"
+            @current-change="handleProjectsPageChange"
+          />
         </el-card>
       </el-col>
 
@@ -350,6 +362,9 @@ import ProjectWebhookDialog from '@/components/ProjectWebhookDialog.vue'
 
 const overviewLoading = ref(false)
 const projectOverview = ref<ProjectOverview[]>([])
+const projectsTotal = ref(0)
+const projectsPage = ref(1)
+const projectsPageSize = ref(20)
 const searchKeyword = ref('')
 const selectedProjectName = ref<string>('')
 const summaryLoading = ref(false)
@@ -440,10 +455,15 @@ const loadProjects = async () => {
   overviewLoading.value = true
   try {
     const keyword = searchKeyword.value.trim()
-    const data = await getProjectsOverview(keyword || undefined)
-    projectOverview.value = data
+    const response = await getProjectsOverview(
+      keyword || undefined,
+      projectsPage.value,
+      projectsPageSize.value
+    )
+    projectOverview.value = response.data
+    projectsTotal.value = response.total
 
-    if (!data.length) {
+    if (!response.data.length) {
       selectedProjectName.value = ''
       summary.value = null
       mrState.data = []
@@ -453,9 +473,9 @@ const loadProjects = async () => {
       return
     }
 
-    const exists = data.some(item => item.project_name === selectedProjectName.value)
+    const exists = response.data.some(item => item.project_name === selectedProjectName.value)
     if (!exists) {
-      selectedProjectName.value = data[0].project_name
+      selectedProjectName.value = response.data[0].project_name
     }
   } catch (error) {
     // 错误提示由拦截器处理
@@ -558,7 +578,19 @@ const handlePushPageChange = async (page: number) => {
 }
 
 const handleSearch = () => {
+  projectsPage.value = 1 // 搜索时重置到第一页
   loadProjects()
+}
+
+const handleProjectsPageChange = async (page: number) => {
+  projectsPage.value = page
+  await loadProjects()
+}
+
+const handleProjectsPageSizeChange = async (pageSize: number) => {
+  projectsPageSize.value = pageSize
+  projectsPage.value = 1 // 改变页大小时重置到第一页
+  await loadProjects()
 }
 
 const openWebhookDialog = () => {
@@ -733,6 +765,12 @@ onMounted(() => {
 
 .search-input {
   margin-bottom: 8px;
+}
+
+.projects-pagination {
+  margin-top: 16px;
+  display: flex;
+  justify-content: center;
 }
 
 .channel-tags {

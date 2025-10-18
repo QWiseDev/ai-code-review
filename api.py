@@ -695,11 +695,29 @@ def delete_project_webhook_config(project_name):
 @api_app.route('/api/projects', methods=['GET'])
 @jwt_required()
 def get_projects_overview():
-    """获取项目管理概览列表"""
+    """获取项目管理概览列表（支持分页）"""
     try:
         search = request.args.get('search')
-        overview = ReviewService.get_project_overview(search=search)
-        return jsonify({'success': True, 'data': overview}), 200
+        page = int(request.args.get('page', 1))
+        page_size = int(request.args.get('page_size', 20))
+        
+        # 获取所有项目
+        all_projects = ReviewService.get_project_overview(search=search)
+        total = len(all_projects)
+        
+        # 分页
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        projects = all_projects[start_idx:end_idx]
+        
+        return jsonify({
+            'success': True,
+            'data': projects,
+            'total': total,
+            'page': page,
+            'page_size': page_size,
+            'total_pages': (total + page_size - 1) // page_size
+        }), 200
     except Exception as e:
         logger.error(f"Get projects overview error: {e}")
         return jsonify({'success': False, 'message': 'Failed to get projects overview'}), 500
