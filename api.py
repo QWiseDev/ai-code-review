@@ -705,6 +705,99 @@ def get_projects_overview():
         return jsonify({'success': False, 'message': 'Failed to get projects overview'}), 500
 
 
+@api_app.route('/api/projects/gitlab-projects', methods=['POST'])
+@jwt_required()
+def get_gitlab_projects():
+    """从 GitLab 获取项目列表"""
+    try:
+        from biz.gitlab.gitlab_service import GitLabService
+        
+        data = request.get_json() or {}
+        source_type = data.get('source_type', 'user')
+        group_id = data.get('group_id')
+        gitlab_url = data.get('gitlab_url')
+        gitlab_token = data.get('gitlab_token')
+        
+        # 初始化 GitLab 服务
+        gitlab_service = GitLabService(gitlab_url=gitlab_url, gitlab_token=gitlab_token)
+        
+        # 根据来源类型获取项目
+        if source_type == 'group':
+            if not group_id or not group_id.strip():
+                return jsonify({'success': False, 'message': 'Group ID 不能为空'}), 400
+            projects = gitlab_service.get_group_projects(group_id.strip())
+        else:  # user
+            projects = gitlab_service.get_user_projects(membership=True)
+        
+        if projects is None:
+            return jsonify({'success': False, 'message': '无法从 GitLab 获取项目列表，请检查配置和权限'}), 400
+        
+        logger.info(f"从 GitLab 获取到 {len(projects)} 个项目")
+        return jsonify({'success': True, 'data': projects}), 200
+    except Exception as e:
+        logger.error(f"Get GitLab projects error: {e}")
+        return jsonify({'success': False, 'message': f'获取项目列表失败: {str(e)}'}), 500
+
+
+@api_app.route('/api/projects/import-from-gitlab', methods=['POST'])
+@jwt_required()
+def import_projects_from_gitlab():
+    """从 GitLab 批量导入项目配置"""
+    try:
+        data = request.get_json() or {}
+        projects = data.get('projects', [])
+        
+        if not isinstance(projects, list) or len(projects) == 0:
+            return jsonify({'success': False, 'message': '请选择要导入的项目'}), 400
+        
+        imported_count = 0
+        errors = []
+        
+        for project in projects:
+            project_name = project.get('name')
+            path_with_namespace = project.get('path_with_namespace')
+            
+            if not project_name:
+                continue
+            
+            try:
+                # 创建或更新项目 webhook 配置
+                ReviewService.upsert_project_webhook_config(
+                    project_name=project_name,
+                    url_slug=path_with_namespace,
+                    dingtalk_webhook_url=None,
+                    wecom_webhook_url=None,
+                    feishu_webhook_url=None,
+                    extra_webhook_url=None,
+                    dingtalk_enabled=0,
+                    wecom_enabled=0,
+                    feishu_enabled=0,
+                    extra_webhook_enabled=0
+                )
+                imported_count += 1
+            except Exception as e:
+                errors.append(f"{project_name}: {str(e)}")
+                logger.error(f"Failed to import project {project_name}: {e}")
+        
+        message = f'成功导入 {imported_count} 个项目'
+        if errors:
+            message += f'，{len(errors)} 个失败'
+        
+        logger.info(f"项目导入完成：{message}")
+        return jsonify({
+            'success': True,
+            'data': {
+                'imported': imported_count,
+                'total': len(projects),
+                'errors': errors
+            },
+            'message': message
+        }), 200
+    except Exception as e:
+        logger.error(f"Import projects from GitLab error: {e}")
+        return jsonify({'success': False, 'message': f'导入失败: {str(e)}'}), 500
+
+
 @api_app.route('/api/projects/<project_name>/summary', methods=['GET'])
 @jwt_required()
 def get_project_summary(project_name):

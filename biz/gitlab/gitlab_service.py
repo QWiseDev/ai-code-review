@@ -215,3 +215,97 @@ class GitLabService:
         except Exception as e:
             logger.error(f"Failed to verify group access: {str(e)}")
             return False
+    
+    def get_user_projects(self, owned: bool = False, membership: bool = True) -> Optional[List[Dict]]:
+        """
+        获取用户有权访问的项目列表
+        
+        Args:
+            owned: 是否只获取用户拥有的项目
+            membership: 是否只获取用户是成员的项目
+            
+        Returns:
+            项目列表，每个项目包含 id, name, path_with_namespace 等信息
+        """
+        endpoint = "api/v4/projects"
+        params = {
+            'simple': True,  # 只返回简化信息
+            'order_by': 'last_activity_at',
+            'sort': 'desc'
+        }
+        
+        if owned:
+            params['owned'] = 'true'
+        if membership:
+            params['membership'] = 'true'
+        
+        projects_data = self._make_request(endpoint, params)
+        
+        if projects_data is None:
+            return None
+        
+        # 格式化项目信息
+        projects = []
+        for project in projects_data:
+            project_info = {
+                'id': project.get('id'),
+                'name': project.get('name'),
+                'path': project.get('path'),
+                'path_with_namespace': project.get('path_with_namespace'),
+                'description': project.get('description', ''),
+                'web_url': project.get('web_url'),
+                'namespace': project.get('namespace', {}),
+                'visibility': project.get('visibility', 'private'),
+                'last_activity_at': project.get('last_activity_at'),
+                'created_at': project.get('created_at')
+            }
+            projects.append(project_info)
+        
+        logger.info(f"Found {len(projects)} projects")
+        return projects
+    
+    def get_group_projects(self, group_id: str, include_subgroups: bool = True) -> Optional[List[Dict]]:
+        """
+        获取组织下的项目列表
+        
+        Args:
+            group_id: 组织 ID 或路径
+            include_subgroups: 是否包含子组织的项目
+            
+        Returns:
+            项目列表
+        """
+        endpoint = f"api/v4/groups/{requests.utils.quote(group_id, safe='')}/projects"
+        params = {
+            'simple': True,
+            'order_by': 'last_activity_at',
+            'sort': 'desc'
+        }
+        
+        if include_subgroups:
+            params['include_subgroups'] = 'true'
+        
+        projects_data = self._make_request(endpoint, params)
+        
+        if projects_data is None:
+            return None
+        
+        # 格式化项目信息
+        projects = []
+        for project in projects_data:
+            project_info = {
+                'id': project.get('id'),
+                'name': project.get('name'),
+                'path': project.get('path'),
+                'path_with_namespace': project.get('path_with_namespace'),
+                'description': project.get('description', ''),
+                'web_url': project.get('web_url'),
+                'namespace': project.get('namespace', {}),
+                'visibility': project.get('visibility', 'private'),
+                'last_activity_at': project.get('last_activity_at'),
+                'created_at': project.get('created_at')
+            }
+            projects.append(project_info)
+        
+        logger.info(f"Found {len(projects)} projects in group {group_id}")
+        return projects
