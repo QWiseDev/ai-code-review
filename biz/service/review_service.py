@@ -117,7 +117,13 @@ class ReviewService:
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         team_id INTEGER NOT NULL,
                         author TEXT NOT NULL UNIQUE,
+                        name TEXT,
+                        email TEXT,
+                        avatar_url TEXT,
+                        access_level INTEGER,
+                        access_level_name TEXT,
                         created_at INTEGER DEFAULT (strftime('%s', 'now')),
+                        updated_at INTEGER DEFAULT (strftime('%s', 'now')),
                         FOREIGN KEY(team_id) REFERENCES teams(id) ON DELETE CASCADE
                     )
                 ''')
@@ -125,6 +131,23 @@ class ReviewService:
                 conn.execute('CREATE INDEX IF NOT EXISTS idx_teams_name ON teams (name);')
                 conn.execute('CREATE INDEX IF NOT EXISTS idx_team_members_team_id ON team_members (team_id);')
                 conn.execute('CREATE INDEX IF NOT EXISTS idx_team_members_author ON team_members (author);')
+                
+                # 为已存在的 team_members 表添加新字段（兼容旧版本）
+                cursor.execute("PRAGMA table_info(team_members)")
+                member_columns = [col[1] for col in cursor.fetchall()]
+                new_member_fields = [
+                    ('name', 'TEXT', 'NULL'),
+                    ('email', 'TEXT', 'NULL'),
+                    ('avatar_url', 'TEXT', 'NULL'),
+                    ('access_level', 'INTEGER', 'NULL'),
+                    ('access_level_name', 'TEXT', 'NULL'),
+                    ('updated_at', 'INTEGER', "strftime('%s', 'now')")
+                ]
+                for field_name, field_type, default_value in new_member_fields:
+                    if field_name not in member_columns:
+                        cursor.execute(f"ALTER TABLE team_members ADD COLUMN {field_name} {field_type} DEFAULT {default_value}")
+                
+                conn.commit()
         except sqlite3.DatabaseError as e:
             print(f"Database initialization failed: {e}")
 
@@ -569,7 +592,7 @@ class ReviewService:
         }
 
     @staticmethod
-    def _get_team_members_map(conn, team_ids: List[int]) -> Dict[int, List[str]]:
+    def _get_team_members_map(conn, team_ids: List[int]) -> Dict[int, List[Dict]]:
         """批量获取团队成员映射"""
         if not team_ids:
             return {}
@@ -577,16 +600,27 @@ class ReviewService:
         cursor = conn.cursor()
         cursor.execute(
             f'''
-            SELECT team_id, author
+            SELECT team_id, author, name, email, avatar_url, access_level, access_level_name, created_at, updated_at
             FROM team_members
             WHERE team_id IN ({placeholders})
-            ORDER BY author
+            ORDER BY access_level DESC, author
             ''',
             team_ids
         )
-        result: Dict[int, List[str]] = {}
-        for team_id, author in cursor.fetchall():
-            result.setdefault(team_id, []).append(author)
+        result: Dict[int, List[Dict]] = {}
+        for row in cursor.fetchall():
+            team_id = row[0]
+            member_info = {
+                'author': row[1],
+                'name': row[2],
+                'email': row[3],
+                'avatar_url': row[4],
+                'access_level': row[5],
+                'access_level_name': row[6],
+                'created_at': row[7],
+                'updated_at': row[8]
+            }
+            result.setdefault(team_id, []).append(member_info)
         return result
 
     @staticmethod
@@ -814,8 +848,8 @@ class ReviewService:
             return False
 
     @staticmethod
-    def get_team_members(team_id: int) -> List[str]:
-        """获取团队成员列表"""
+    def get_team_members(team_id: int) -> List[Dict]:
+        """获取团队成员列表（包含详细信息）"""
         if not team_id:
             raise ValueError("团队ID不能为空。")
         try:
@@ -824,14 +858,26 @@ class ReviewService:
                 cursor = conn.cursor()
                 cursor.execute(
                     '''
-                    SELECT author
+                    SELECT author, name, email, avatar_url, access_level, access_level_name, created_at, updated_at
                     FROM team_members
                     WHERE team_id = ?
-                    ORDER BY author
+                    ORDER BY access_level DESC, author
                     ''',
                     (team_id,)
                 )
-                return [row[0] for row in cursor.fetchall()]
+                members = []
+                for row in cursor.fetchall():
+                    members.append({
+                        'author': row[0],
+                        'name': row[1],
+                        'email': row[2],
+                        'avatar_url': row[3],
+                        'access_level': row[4],
+                        'access_level_name': row[5],
+                        'created_at': row[6],
+                        'updated_at': row[7]
+                    })
+                return members
         except sqlite3.DatabaseError as e:
             print(f"Error retrieving team members: {e}")
             return []
@@ -940,9 +986,9 @@ class ReviewService:
         if not members:
             raise ValueError(f"GitLab {source_type} 中没有找到任何成员")
         
-        # 过滤活跃成员，提取用户名
+        # 过滤活跃成员
         active_members = [
-            m['username'] for m in members 
+            m for m in members 
             if m.get('state') == 'active' and m.get('username')
         ]
         
@@ -950,8 +996,9 @@ class ReviewService:
             raise ValueError("没有找到活跃的成员")
         
         # 获取当前团队成员
-        current_members = set(ReviewService.get_team_members(team_id))
-        new_members = set(active_members)
+        current_members_list = ReviewService.get_team_members(team_id)
+        current_members = set([m['author'] if isinstance(m, dict) else m for m in current_members_list])
+        new_members = set([m['username'] for m in active_members])
         
         added_count = 0
         removed_count = 0
@@ -966,13 +1013,14 @@ class ReviewService:
                     cursor.execute('DELETE FROM team_members WHERE team_id = ?', (team_id,))
                     removed_count = cursor.rowcount
                     
-                    # 批量插入新成员
+                    # 批量插入新成员（包含详细信息）
                     cursor.executemany(
                         '''
-                        INSERT INTO team_members (team_id, author, created_at)
-                        VALUES (?, ?, strftime('%s', 'now'))
+                        INSERT INTO team_members (team_id, author, name, email, avatar_url, access_level, access_level_name, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now'))
                         ''',
-                        [(team_id, username) for username in active_members]
+                        [(team_id, m['username'], m.get('name'), m.get('email'), m.get('avatar_url'), 
+                          m.get('access_level'), m.get('access_level_name')) for m in active_members]
                     )
                     added_count = cursor.rowcount
                     
@@ -980,13 +1028,22 @@ class ReviewService:
                     # 添加新成员
                     members_to_add = new_members - current_members
                     if members_to_add:
+                        members_data = [m for m in active_members if m['username'] in members_to_add]
                         cursor.executemany(
                             '''
-                            INSERT INTO team_members (team_id, author, created_at)
-                            VALUES (?, ?, strftime('%s', 'now'))
-                            ON CONFLICT(author) DO UPDATE SET team_id = excluded.team_id
+                            INSERT INTO team_members (team_id, author, name, email, avatar_url, access_level, access_level_name, created_at, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now'), strftime('%s', 'now'))
+                            ON CONFLICT(author) DO UPDATE SET 
+                                team_id = excluded.team_id,
+                                name = excluded.name,
+                                email = excluded.email,
+                                avatar_url = excluded.avatar_url,
+                                access_level = excluded.access_level,
+                                access_level_name = excluded.access_level_name,
+                                updated_at = strftime('%s', 'now')
                             ''',
-                            [(team_id, username) for username in members_to_add]
+                            [(team_id, m['username'], m.get('name'), m.get('email'), m.get('avatar_url'),
+                              m.get('access_level'), m.get('access_level_name')) for m in members_data]
                         )
                         added_count = len(members_to_add)
                 

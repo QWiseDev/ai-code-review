@@ -1,5 +1,16 @@
 import { apiClient } from './client'
 
+export interface TeamMember {
+  author: string
+  name?: string | null
+  email?: string | null
+  avatar_url?: string | null
+  access_level?: number | null
+  access_level_name?: string | null
+  created_at?: number
+  updated_at?: number
+}
+
 export interface Team {
   id: number
   name: string
@@ -7,7 +18,7 @@ export interface Team {
   description?: string | null
   created_at?: number
   updated_at?: number
-  members?: string[]
+  members?: TeamMember[]
 }
 
 export interface TeamPayload {

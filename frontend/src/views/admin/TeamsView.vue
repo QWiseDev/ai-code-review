@@ -79,24 +79,45 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="membersDialogVisible" :title="memberDialogTitle" width="600px">
+    <el-dialog v-model="membersDialogVisible" :title="memberDialogTitle" width="800px">
       <div v-if="currentTeam">
         <p class="dialog-tip">
-          已加入团队的人员列表如下，可一键移除。支持批量录入，使用换行、逗号或分号分隔成员账号。
+          已加入团队的人员列表如下。从 GitLab 同步的成员会显示详细信息，手动添加的成员仅显示用户名。
         </p>
-        <div class="members-list" v-if="currentTeam.members?.length">
-          <el-tag
-            v-for="member in currentTeam.members"
-            :key="member"
-            closable
-            type="info"
-            effect="plain"
-            @close="handleRemoveMember(member)"
-          >
-            {{ member }}
-          </el-tag>
+        
+        <div class="members-container" v-if="currentTeam.members?.length">
+          <div class="member-card" v-for="member in currentTeam.members" :key="getMemberKey(member)">
+            <div class="member-info">
+              <el-avatar :size="48" :src="getMemberAvatar(member)" class="member-avatar">
+                {{ getMemberInitial(member) }}
+              </el-avatar>
+              <div class="member-details">
+                <div class="member-name">
+                  <span class="name-text">{{ getMemberName(member) }}</span>
+                  <el-tag v-if="getMemberRole(member)" size="small" type="info" class="role-tag">
+                    {{ getMemberRole(member) }}
+                  </el-tag>
+                </div>
+                <div class="member-username">@{{ getMemberUsername(member) }}</div>
+                <div v-if="getMemberEmail(member)" class="member-email">
+                  <el-icon><Message /></el-icon>
+                  {{ getMemberEmail(member) }}
+                </div>
+              </div>
+            </div>
+            <el-button 
+              type="danger" 
+              size="small" 
+              :icon="Delete" 
+              circle 
+              @click="handleRemoveMember(getMemberUsername(member))"
+              title="移除成员"
+            />
+          </div>
         </div>
         <el-empty v-else description="尚未添加成员" />
+
+        <el-divider />
 
         <el-form label-width="100px" class="member-form">
           <el-form-item label="批量添加">
@@ -106,6 +127,7 @@
               :rows="4"
               placeholder="一次可输入多位成员，换行或使用逗号、分号分隔"
             />
+            <div class="form-tip">手动添加的成员仅保存用户名，建议使用"从 GitLab 同步"功能获取完整信息</div>
           </el-form-item>
         </el-form>
       </div>
@@ -174,7 +196,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Delete, Message } from '@element-plus/icons-vue'
 import {
   fetchTeams,
   createTeam,
@@ -183,7 +205,8 @@ import {
   addTeamMembers,
   removeTeamMember,
   syncTeamFromGitLab,
-  type Team
+  type Team,
+  type TeamMember
 } from '@/api/teams'
 
 type DialogMode = 'create' | 'edit'
@@ -268,6 +291,40 @@ const parseAuthors = (raw: string): string[] => {
     .split(/[\n,，;；]+/)
     .map((item) => item.trim())
     .filter((item) => item.length > 0)
+}
+
+// 成员信息辅助方法
+const getMemberKey = (member: TeamMember | string): string => {
+  return typeof member === 'string' ? member : member.author
+}
+
+const getMemberUsername = (member: TeamMember | string): string => {
+  return typeof member === 'string' ? member : member.author
+}
+
+const getMemberName = (member: TeamMember | string): string => {
+  if (typeof member === 'string') return member
+  return member.name || member.author
+}
+
+const getMemberEmail = (member: TeamMember | string): string | null => {
+  if (typeof member === 'string') return null
+  return member.email || null
+}
+
+const getMemberAvatar = (member: TeamMember | string): string | undefined => {
+  if (typeof member === 'string') return undefined
+  return member.avatar_url || undefined
+}
+
+const getMemberRole = (member: TeamMember | string): string | null => {
+  if (typeof member === 'string') return null
+  return member.access_level_name || null
+}
+
+const getMemberInitial = (member: TeamMember | string): string => {
+  const name = getMemberName(member)
+  return name.charAt(0).toUpperCase()
 }
 
 const loadTeams = async () => {
@@ -514,25 +571,96 @@ onMounted(() => {
   color: #909399;
 }
 
-.members-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+.members-container {
+  max-height: 400px;
+  overflow-y: auto;
   margin-bottom: 16px;
 }
 
-.dialog-tip {
+.member-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
   margin-bottom: 12px;
+  background-color: #f5f7fa;
+  border-radius: 8px;
+  transition: all 0.3s;
+}
+
+.member-card:hover {
+  background-color: #ecf5ff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.member-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.member-avatar {
+  flex-shrink: 0;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.member-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.member-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.name-text {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.role-tag {
+  flex-shrink: 0;
+}
+
+.member-username {
+  font-size: 13px;
+  color: #606266;
+  margin-bottom: 2px;
+}
+
+.member-email {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #909399;
+}
+
+.member-email .el-icon {
+  font-size: 14px;
+}
+
+.dialog-tip {
+  margin-bottom: 16px;
+  padding: 12px;
+  background-color: #f0f9ff;
+  border-left: 3px solid #409eff;
   color: #606266;
   line-height: 1.6;
+  border-radius: 4px;
 }
 
 .member-form {
-  margin-top: 16px;
+  margin-top: 0;
 }
 
 .form-tip {
-  margin-top: 4px;
+  margin-top: 8px;
   font-size: 12px;
   color: #909399;
   line-height: 1.5;
