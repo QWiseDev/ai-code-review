@@ -136,16 +136,20 @@ class ReviewService:
                 cursor.execute("PRAGMA table_info(team_members)")
                 member_columns = [col[1] for col in cursor.fetchall()]
                 new_member_fields = [
-                    ('name', 'TEXT', 'NULL'),
-                    ('email', 'TEXT', 'NULL'),
-                    ('avatar_url', 'TEXT', 'NULL'),
-                    ('access_level', 'INTEGER', 'NULL'),
-                    ('access_level_name', 'TEXT', 'NULL'),
-                    ('updated_at', 'INTEGER', "strftime('%s', 'now')")
+                    ('name', 'TEXT'),
+                    ('email', 'TEXT'),
+                    ('avatar_url', 'TEXT'),
+                    ('access_level', 'INTEGER'),
+                    ('access_level_name', 'TEXT'),
+                    ('updated_at', 'INTEGER')
                 ]
-                for field_name, field_type, default_value in new_member_fields:
+                for field_name, field_type in new_member_fields:
                     if field_name not in member_columns:
-                        cursor.execute(f"ALTER TABLE team_members ADD COLUMN {field_name} {field_type} DEFAULT {default_value}")
+                        try:
+                            cursor.execute(f"ALTER TABLE team_members ADD COLUMN {field_name} {field_type}")
+                            print(f"Added column {field_name} to team_members table")
+                        except sqlite3.DatabaseError as alter_error:
+                            print(f"Warning: Could not add column {field_name}: {alter_error}")
                 
                 conn.commit()
         except sqlite3.DatabaseError as e:
@@ -598,28 +602,41 @@ class ReviewService:
             return {}
         placeholders = ','.join(['?'] * len(team_ids))
         cursor = conn.cursor()
+        
+        # 检查 team_members 表有哪些列
+        cursor.execute("PRAGMA table_info(team_members)")
+        available_columns = {col[1] for col in cursor.fetchall()}
+        
+        # 构建查询字段列表（根据实际存在的列）
+        base_fields = ['team_id', 'author']
+        optional_fields = ['name', 'email', 'avatar_url', 'access_level', 'access_level_name', 'created_at', 'updated_at']
+        query_fields = base_fields + [f for f in optional_fields if f in available_columns]
+        
+        # 构建 ORDER BY 子句
+        if 'access_level' in available_columns:
+            order_by = 'ORDER BY access_level DESC, author'
+        else:
+            order_by = 'ORDER BY author'
+        
         cursor.execute(
             f'''
-            SELECT team_id, author, name, email, avatar_url, access_level, access_level_name, created_at, updated_at
+            SELECT {', '.join(query_fields)}
             FROM team_members
             WHERE team_id IN ({placeholders})
-            ORDER BY access_level DESC, author
+            {order_by}
             ''',
             team_ids
         )
         result: Dict[int, List[Dict]] = {}
         for row in cursor.fetchall():
-            team_id = row[0]
-            member_info = {
-                'author': row[1],
-                'name': row[2],
-                'email': row[3],
-                'avatar_url': row[4],
-                'access_level': row[5],
-                'access_level_name': row[6],
-                'created_at': row[7],
-                'updated_at': row[8]
-            }
+            member_info = {}
+            for idx, field in enumerate(query_fields):
+                member_info[field] = row[idx]
+            
+            team_id = member_info.pop('team_id')
+            # 确保 author 字段存在
+            if 'author' not in member_info:
+                continue
             result.setdefault(team_id, []).append(member_info)
         return result
 
@@ -856,27 +873,37 @@ class ReviewService:
             with sqlite3.connect(ReviewService.DB_FILE) as conn:
                 conn.execute('PRAGMA foreign_keys = ON;')
                 cursor = conn.cursor()
+                
+                # 检查 team_members 表有哪些列
+                cursor.execute("PRAGMA table_info(team_members)")
+                available_columns = {col[1] for col in cursor.fetchall()}
+                
+                # 构建查询字段列表（根据实际存在的列）
+                base_fields = ['author']
+                optional_fields = ['name', 'email', 'avatar_url', 'access_level', 'access_level_name', 'created_at', 'updated_at']
+                query_fields = base_fields + [f for f in optional_fields if f in available_columns]
+                
+                # 构建 ORDER BY 子句
+                if 'access_level' in available_columns:
+                    order_by = 'ORDER BY access_level DESC, author'
+                else:
+                    order_by = 'ORDER BY author'
+                
                 cursor.execute(
-                    '''
-                    SELECT author, name, email, avatar_url, access_level, access_level_name, created_at, updated_at
+                    f'''
+                    SELECT {', '.join(query_fields)}
                     FROM team_members
                     WHERE team_id = ?
-                    ORDER BY access_level DESC, author
+                    {order_by}
                     ''',
                     (team_id,)
                 )
                 members = []
                 for row in cursor.fetchall():
-                    members.append({
-                        'author': row[0],
-                        'name': row[1],
-                        'email': row[2],
-                        'avatar_url': row[3],
-                        'access_level': row[4],
-                        'access_level_name': row[5],
-                        'created_at': row[6],
-                        'updated_at': row[7]
-                    })
+                    member_info = {}
+                    for idx, field in enumerate(query_fields):
+                        member_info[field] = row[idx]
+                    members.append(member_info)
                 return members
         except sqlite3.DatabaseError as e:
             print(f"Error retrieving team members: {e}")
