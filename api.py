@@ -729,29 +729,39 @@ def get_gitlab_projects():
     """从 GitLab 获取项目列表"""
     try:
         from biz.gitlab.gitlab_service import GitLabService
-        
+
         data = request.get_json() or {}
         source_type = data.get('source_type', 'user')
         group_id = data.get('group_id')
+        search = data.get('search')  # 搜索关键字
         gitlab_url = data.get('gitlab_url')
         gitlab_token = data.get('gitlab_token')
-        
+        max_results = data.get('max_results', 200)  # 默认最多返回 200 个项目
+
         # 初始化 GitLab 服务
         gitlab_service = GitLabService(gitlab_url=gitlab_url, gitlab_token=gitlab_token)
-        
+
         # 根据来源类型获取项目
         if source_type == 'group':
             if not group_id or not group_id.strip():
                 return jsonify({'success': False, 'message': 'Group ID 不能为空'}), 400
-            projects = gitlab_service.get_group_projects(group_id.strip())
+            projects = gitlab_service.get_group_projects(
+                group_id.strip(),
+                max_results=max_results,
+                search=search.strip() if search else None
+            )
         else:  # user
-            projects = gitlab_service.get_user_projects(membership=True)
-        
+            projects = gitlab_service.get_user_projects(
+                membership=True,
+                max_results=max_results,
+                search=search.strip() if search else None
+            )
+
         if projects is None:
             return jsonify({'success': False, 'message': '无法从 GitLab 获取项目列表，请检查配置和权限'}), 400
-        
-        logger.info(f"从 GitLab 获取到 {len(projects)} 个项目")
-        return jsonify({'success': True, 'data': projects}), 200
+
+        logger.info(f"从 GitLab 获取到 {len(projects)} 个项目 (search: {search})")
+        return jsonify({'success': True, 'data': projects, 'total': len(projects)}), 200
     except Exception as e:
         logger.error(f"Get GitLab projects error: {e}")
         return jsonify({'success': False, 'message': f'获取项目列表失败: {str(e)}'}), 500
@@ -1148,11 +1158,64 @@ def handle_gitlab_webhook(data):
         return jsonify(error_message), 400
 
 
+def kill_process_on_port(port):
+    """杀死占用指定端口的进程"""
+    try:
+        import subprocess
+        import platform
+
+        system = platform.system()
+        if system == 'Darwin' or system == 'Linux':  # macOS or Linux
+            # 查找占用端口的进程
+            result = subprocess.run(
+                ['lsof', '-ti', f':{port}'],
+                capture_output=True,
+                text=True
+            )
+            if result.stdout.strip():
+                pids = result.stdout.strip().split('\n')
+                for pid in pids:
+                    if pid:
+                        logger.warning(f"发现端口 {port} 被进程 {pid} 占用，正在清理...")
+                        subprocess.run(['kill', '-9', pid], check=False)
+                        logger.info(f"已清理占用端口 {port} 的进程 {pid}")
+                return True
+        elif system == 'Windows':
+            # Windows 使用 netstat 和 taskkill
+            result = subprocess.run(
+                ['netstat', '-ano', '|', 'findstr', f':{port}'],
+                capture_output=True,
+                text=True,
+                shell=True
+            )
+            if result.stdout:
+                lines = result.stdout.strip().split('\n')
+                for line in lines:
+                    parts = line.split()
+                    if len(parts) >= 5:
+                        pid = parts[-1]
+                        logger.warning(f"发现端口 {port} 被进程 {pid} 占用，正在清理...")
+                        subprocess.run(['taskkill', '/F', '/PID', pid], check=False)
+                        logger.info(f"已清理占用端口 {port} 的进程 {pid}")
+                return True
+    except Exception as e:
+        logger.error(f"清理端口 {port} 时出错: {e}")
+    return False
+
+
 if __name__ == '__main__':
     check_config()
+
+    # 检查并清理端口占用
+    port = int(os.environ.get('SERVER_PORT', 5001))
+    logger.info(f"准备启动服务在端口 {port}...")
+
+    if kill_process_on_port(port):
+        logger.info("端口清理完成，等待 1 秒...")
+        time.sleep(1)
+
     # 启动定时任务调度器
     setup_scheduler()
 
     # 启动Flask API服务
-    port = int(os.environ.get('SERVER_PORT', 5001))
     api_app.run(host='0.0.0.0', port=port)

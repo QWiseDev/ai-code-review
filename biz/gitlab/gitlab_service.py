@@ -43,54 +43,61 @@ class GitLabService:
             'Content-Type': 'application/json'
         }
     
-    def _make_request(self, endpoint: str, params: Dict = None) -> Optional[List]:
+    def _make_request(self, endpoint: str, params: Dict = None, max_results: int = None) -> Optional[List]:
         """
         执行 API 请求并处理分页
-        
+
         Args:
             endpoint: API 端点
             params: 请求参数
-            
+            max_results: 最大返回结果数量，None 表示获取所有
+
         Returns:
             API 响应数据列表
         """
         if not self.gitlab_token:
             logger.error("GitLab access token is required for API requests")
             return None
-        
+
         url = urljoin(f"{self.gitlab_url}/", endpoint)
         headers = self._get_headers()
         all_results = []
         page = 1
         per_page = 100
-        
+
         if params is None:
             params = {}
-        
+
         params['per_page'] = per_page
-        
+
         try:
             while True:
                 params['page'] = page
                 logger.debug(f"Requesting GitLab API: {url}, page: {page}")
                 response = requests.get(url, headers=headers, params=params, verify=False, timeout=30)
-                
+
                 if response.status_code != 200:
                     logger.error(f"GitLab API request failed: {response.status_code}, {response.text}")
                     return None
-                
+
                 data = response.json()
                 if not data:
                     break
-                
+
                 all_results.extend(data)
-                
+
+                # 如果设置了最大结果数且已达到，则停止
+                if max_results and len(all_results) >= max_results:
+                    all_results = all_results[:max_results]
+                    logger.info(f"Reached max_results limit of {max_results}")
+                    break
+
                 # 检查是否还有更多页
                 if len(data) < per_page:
                     break
-                
+
                 page += 1
-                
+
                 # 安全限制：最多获取 1000 个成员
                 if len(all_results) >= 1000:
                     logger.warning("Reached maximum limit of 1000 members")
@@ -216,14 +223,16 @@ class GitLabService:
             logger.error(f"Failed to verify group access: {str(e)}")
             return False
     
-    def get_user_projects(self, owned: bool = False, membership: bool = True) -> Optional[List[Dict]]:
+    def get_user_projects(self, owned: bool = False, membership: bool = True, max_results: int = 200, search: str = None) -> Optional[List[Dict]]:
         """
         获取用户有权访问的项目列表
-        
+
         Args:
             owned: 是否只获取用户拥有的项目
             membership: 是否只获取用户是成员的项目
-            
+            max_results: 最大返回结果数量，默认 200
+            search: 搜索关键字，按项目名称搜索
+
         Returns:
             项目列表，每个项目包含 id, name, path_with_namespace 等信息
         """
@@ -233,13 +242,15 @@ class GitLabService:
             'order_by': 'last_activity_at',
             'sort': 'desc'
         }
-        
+
         if owned:
             params['owned'] = 'true'
         if membership:
             params['membership'] = 'true'
-        
-        projects_data = self._make_request(endpoint, params)
+        if search:
+            params['search'] = search
+
+        projects_data = self._make_request(endpoint, params, max_results=max_results)
         
         if projects_data is None:
             return None
@@ -264,14 +275,16 @@ class GitLabService:
         logger.info(f"Found {len(projects)} projects")
         return projects
     
-    def get_group_projects(self, group_id: str, include_subgroups: bool = True) -> Optional[List[Dict]]:
+    def get_group_projects(self, group_id: str, include_subgroups: bool = True, max_results: int = 200, search: str = None) -> Optional[List[Dict]]:
         """
         获取组织下的项目列表
-        
+
         Args:
             group_id: 组织 ID 或路径
             include_subgroups: 是否包含子组织的项目
-            
+            max_results: 最大返回结果数量，默认 200
+            search: 搜索关键字，按项目名称搜索
+
         Returns:
             项目列表
         """
@@ -281,11 +294,13 @@ class GitLabService:
             'order_by': 'last_activity_at',
             'sort': 'desc'
         }
-        
+
         if include_subgroups:
             params['include_subgroups'] = 'true'
-        
-        projects_data = self._make_request(endpoint, params)
+        if search:
+            params['search'] = search
+
+        projects_data = self._make_request(endpoint, params, max_results=max_results)
         
         if projects_data is None:
             return None

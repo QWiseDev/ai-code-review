@@ -81,6 +81,8 @@ export interface GitLabProject {
 export interface GetGitLabProjectsPayload {
   source_type: 'user' | 'group'
   group_id?: string
+  search?: string
+  max_results?: number
   gitlab_url?: string
   gitlab_token?: string
 }
@@ -101,7 +103,10 @@ export interface ImportProjectsResult {
 export const getGitLabProjects = async (payload: GetGitLabProjectsPayload): Promise<GitLabProject[]> => {
   const response = await apiClient.post<ApiResponse<GitLabProject[]>>(
     '/api/projects/gitlab-projects',
-    payload
+    payload,
+    {
+      timeout: 90000 // 90 秒超时，GitLab 项目获取可能较慢
+    }
   )
   return response.data.data
 }

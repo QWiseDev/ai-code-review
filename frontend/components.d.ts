@@ -60,6 +60,7 @@ declare module 'vue' {
     MarkdownRenderer: typeof import('./src/components/MarkdownRenderer.vue')['default']
     ProjectChart: typeof import('./src/components/charts/ProjectChart.vue')['default']
     ProjectCountChart: typeof import('./src/components/charts/ProjectCountChart.vue')['default']
+    ProjectDetailDialog: typeof import('./src/components/ProjectDetailDialog.vue')['default']
     ProjectScoreChart: typeof import('./src/components/charts/ProjectScoreChart.vue')['default']
     ProjectStatisticsCharts: typeof import('./src/components/charts/ProjectStatisticsCharts.vue')['default']
     ProjectWebhookDialog: typeof import('./src/components/ProjectWebhookDialog.vue')['default']

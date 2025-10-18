@@ -31,6 +31,25 @@ cd frontend
 npm install
 cd ..
 
+# 检查并清理端口占用
+echo "🔍 检查端口占用情况..."
+BACKEND_PORT=5001
+FRONTEND_PORT=3000
+
+# 检查并杀死占用后端端口的进程
+if lsof -i :$BACKEND_PORT > /dev/null 2>&1; then
+    echo "⚠️  检测到端口 $BACKEND_PORT 被占用，正在清理..."
+    lsof -ti :$BACKEND_PORT | xargs kill -9 2>/dev/null
+    sleep 1
+fi
+
+# 检查并杀死占用前端端口的进程
+if lsof -i :$FRONTEND_PORT > /dev/null 2>&1; then
+    echo "⚠️  检测到端口 $FRONTEND_PORT 被占用，正在清理..."
+    lsof -ti :$FRONTEND_PORT | xargs kill -9 2>/dev/null
+    sleep 1
+fi
+
 # 启动后端服务
 echo "🔧 启动Flask后端服务 (端口5001)..."
 python3 api.py &
