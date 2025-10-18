@@ -103,7 +103,7 @@
 ```bash
 # GitLab 配置
 GITLAB_URL=https://gitlab.com
-GITLAB_TOKEN=your_gitlab_token_here
+GITLAB_ACCESS_TOKEN=your_gitlab_token_here
 ```
 
 **注意：** Token 需要有以下权限：
@@ -157,9 +157,9 @@ curl -X POST "http://localhost:5001/api/teams/1/sync-from-gitlab" \
 
 同步过程中可能遇到的错误及解决方法：
 
-1. **"GitLab token is required for API requests"**
-   - 原因：未配置 GitLab Token
-   - 解决：在环境变量或请求中提供有效的 Token
+1. **"GitLab access token is required for API requests"**
+   - 原因：未配置 GitLab Access Token
+   - 解决：在环境变量 `GITLAB_ACCESS_TOKEN` 或请求中提供有效的 Token
 
 2. **"无法从 GitLab 获取成员信息"**
    - 原因：Token 无权限或项目/组织 ID 错误

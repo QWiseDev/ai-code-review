@@ -31,10 +31,10 @@ class GitLabService:
             gitlab_token: GitLab 访问令牌，如果不提供则从环境变量读取
         """
         self.gitlab_url = (gitlab_url or os.getenv('GITLAB_URL', 'https://gitlab.com')).rstrip('/')
-        self.gitlab_token = gitlab_token or os.getenv('GITLAB_TOKEN', '')
+        self.gitlab_token = gitlab_token or os.getenv('GITLAB_ACCESS_TOKEN', '')
         
         if not self.gitlab_token:
-            logger.warning("GitLab token not configured. Some features may not work.")
+            logger.warning("GitLab access token not configured. Some features may not work.")
     
     def _get_headers(self) -> Dict[str, str]:
         """获取 API 请求头"""
@@ -55,7 +55,7 @@ class GitLabService:
             API 响应数据列表
         """
         if not self.gitlab_token:
-            logger.error("GitLab token is required for API requests")
+            logger.error("GitLab access token is required for API requests")
             return None
         
         url = urljoin(f"{self.gitlab_url}/", endpoint)
