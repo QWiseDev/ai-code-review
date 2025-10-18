@@ -82,3 +82,34 @@ export const removeTeamMember = async (teamId: number, author: string): Promise<
   )
   return response.data.data
 }
+
+export interface SyncFromGitLabPayload {
+  source_type: 'project' | 'group'
+  source_id: string
+  gitlab_url?: string
+  gitlab_token?: string
+  merge_strategy?: 'replace' | 'merge'
+}
+
+export interface SyncFromGitLabResponse {
+  success: boolean
+  added: number
+  removed: number
+  total: number
+  team: Team
+  sync_source: {
+    type: string
+    id: string
+  }
+}
+
+export const syncTeamFromGitLab = async (
+  teamId: number,
+  payload: SyncFromGitLabPayload
+): Promise<SyncFromGitLabResponse> => {
+  const response = await apiClient.post<ApiResponse<SyncFromGitLabResponse>>(
+    `/api/teams/${teamId}/sync-from-gitlab`,
+    payload
+  )
+  return response.data.data
+}

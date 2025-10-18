@@ -891,6 +891,126 @@ class ReviewService:
             print(f"Error retrieving author team mapping: {e}")
             return {}
 
+    @staticmethod
+    def sync_team_from_gitlab(team_id: int, source_type: str, source_id: str, 
+                              gitlab_url: str = None, gitlab_token: str = None,
+                              merge_strategy: str = 'replace') -> Dict:
+        """
+        从 GitLab 同步团队成员
+        
+        Args:
+            team_id: 团队ID
+            source_type: 来源类型，'project' 或 'group'
+            source_id: GitLab 项目ID或组织ID
+            gitlab_url: GitLab URL（可选，默认从环境变量读取）
+            gitlab_token: GitLab Token（可选，默认从环境变量读取）
+            merge_strategy: 合并策略，'replace'（替换）或 'merge'（合并）
+            
+        Returns:
+            同步结果字典，包含 added, removed, total 等信息
+        """
+        from biz.gitlab.gitlab_service import GitLabService
+        
+        if not team_id:
+            raise ValueError("团队ID不能为空")
+        
+        if source_type not in ['project', 'group']:
+            raise ValueError("来源类型必须是 'project' 或 'group'")
+        
+        if not source_id or not source_id.strip():
+            raise ValueError("GitLab 项目/组织 ID 不能为空")
+        
+        # 验证团队是否存在
+        team = ReviewService.get_team(team_id)
+        if not team:
+            raise ValueError(f"团队 ID {team_id} 不存在")
+        
+        # 初始化 GitLab 服务
+        gitlab_service = GitLabService(gitlab_url=gitlab_url, gitlab_token=gitlab_token)
+        
+        # 根据来源类型获取成员
+        if source_type == 'project':
+            members = gitlab_service.get_project_members(source_id)
+        else:  # group
+            members = gitlab_service.get_group_members(source_id)
+        
+        if members is None:
+            raise ValueError(f"无法从 GitLab 获取成员信息，请检查 {source_type} ID 和访问权限")
+        
+        if not members:
+            raise ValueError(f"GitLab {source_type} 中没有找到任何成员")
+        
+        # 过滤活跃成员，提取用户名
+        active_members = [
+            m['username'] for m in members 
+            if m.get('state') == 'active' and m.get('username')
+        ]
+        
+        if not active_members:
+            raise ValueError("没有找到活跃的成员")
+        
+        # 获取当前团队成员
+        current_members = set(ReviewService.get_team_members(team_id))
+        new_members = set(active_members)
+        
+        added_count = 0
+        removed_count = 0
+        
+        try:
+            with sqlite3.connect(ReviewService.DB_FILE) as conn:
+                conn.execute('PRAGMA foreign_keys = ON;')
+                cursor = conn.cursor()
+                
+                if merge_strategy == 'replace':
+                    # 替换模式：先删除所有现有成员，再添加新成员
+                    cursor.execute('DELETE FROM team_members WHERE team_id = ?', (team_id,))
+                    removed_count = cursor.rowcount
+                    
+                    # 批量插入新成员
+                    cursor.executemany(
+                        '''
+                        INSERT INTO team_members (team_id, author, created_at)
+                        VALUES (?, ?, strftime('%s', 'now'))
+                        ''',
+                        [(team_id, username) for username in active_members]
+                    )
+                    added_count = cursor.rowcount
+                    
+                else:  # merge 模式
+                    # 添加新成员
+                    members_to_add = new_members - current_members
+                    if members_to_add:
+                        cursor.executemany(
+                            '''
+                            INSERT INTO team_members (team_id, author, created_at)
+                            VALUES (?, ?, strftime('%s', 'now'))
+                            ON CONFLICT(author) DO UPDATE SET team_id = excluded.team_id
+                            ''',
+                            [(team_id, username) for username in members_to_add]
+                        )
+                        added_count = len(members_to_add)
+                
+                conn.commit()
+            
+            # 获取更新后的团队信息
+            updated_team = ReviewService.get_team(team_id, include_members=True)
+            
+            return {
+                'success': True,
+                'added': added_count,
+                'removed': removed_count,
+                'total': len(updated_team.get('members', [])),
+                'team': updated_team,
+                'sync_source': {
+                    'type': source_type,
+                    'id': source_id
+                }
+            }
+            
+        except sqlite3.DatabaseError as e:
+            print(f"Error syncing team from GitLab: {e}")
+            raise ValueError(f"同步失败：数据库错误 - {str(e)}")
+
 
 # Initialize database
 ReviewService.init_db()

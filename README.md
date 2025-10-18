@@ -160,6 +160,7 @@ export default defineConfig({
 - ✅ **多平台支持**: 同时支持GitLab和GitHub
 - ✅ **多LLM支持**: OpenAI、智谱AI、Ollama等
 - ✅ **实时统计**: 审查数据可视化展示
+- ✅ **团队管理**: 支持从GitLab自动同步团队成员
 - ✅ **用户认证**: JWT token认证机制
 - ✅ **响应式UI**: 基于Element Plus的现代化界面
 - ✅ **Docker部署**: 支持容器化部署
@@ -175,6 +176,16 @@ export default defineConfig({
 - `GET /api/statistics/projects` - 项目统计数据
 - `GET /api/reviews/mr` - MR审查记录
 - `GET /api/reviews/push` - Push审查记录
+
+### 团队管理
+- `GET /api/teams` - 获取团队列表
+- `GET /api/teams/{id}` - 获取团队详情
+- `POST /api/teams` - 创建团队
+- `PUT /api/teams/{id}` - 更新团队
+- `DELETE /api/teams/{id}` - 删除团队
+- `POST /api/teams/{id}/members` - 添加团队成员
+- `DELETE /api/teams/{id}/members/{author}` - 移除团队成员
+- `POST /api/teams/{id}/sync-from-gitlab` - 从GitLab同步成员 🆕
 
 ## 🛠️ 开发指南
 

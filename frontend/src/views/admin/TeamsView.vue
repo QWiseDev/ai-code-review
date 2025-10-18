@@ -36,10 +36,11 @@
             <span v-else class="text-muted">未填写</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="240" fixed="right" align="center">
+        <el-table-column label="操作" width="320" fixed="right" align="center">
           <template #default="{ row }">
             <el-button type="primary" link @click="openEditDialog(row)">编辑</el-button>
             <el-button type="success" link @click="openMemberDialog(row)">成员管理</el-button>
+            <el-button type="warning" link @click="openSyncDialog(row)">从 GitLab 同步</el-button>
             <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -114,6 +115,59 @@
         <el-button type="primary" :loading="memberLoading" @click="handleAddMembers">批量添加成员</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="syncDialogVisible" title="从 GitLab 同步成员" width="600px">
+      <div v-if="currentTeam">
+        <p class="dialog-tip">
+          从 GitLab 项目或组织同步成员到当前团队。系统将自动获取活跃成员的用户名并添加到团队中。
+        </p>
+        <el-form ref="syncFormRef" :model="syncForm" :rules="syncFormRules" label-width="120px">
+          <el-form-item label="来源类型" prop="source_type">
+            <el-radio-group v-model="syncForm.source_type">
+              <el-radio value="project">项目 (Project)</el-radio>
+              <el-radio value="group">组织 (Group)</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item 
+            :label="syncForm.source_type === 'project' ? '项目 ID/路径' : '组织 ID/路径'" 
+            prop="source_id"
+          >
+            <el-input
+              v-model="syncForm.source_id"
+              :placeholder="syncForm.source_type === 'project' ? '例如: mygroup/myproject 或项目 ID' : '例如: mygroup 或组织 ID'"
+            />
+            <div class="form-tip">支持使用项目/组织的完整路径或数字 ID</div>
+          </el-form-item>
+          <el-form-item label="合并策略" prop="merge_strategy">
+            <el-radio-group v-model="syncForm.merge_strategy">
+              <el-radio value="replace">替换 (清空现有成员)</el-radio>
+              <el-radio value="merge">合并 (保留现有成员)</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="GitLab URL">
+            <el-input
+              v-model="syncForm.gitlab_url"
+              placeholder="选填，默认从系统环境变量读取"
+            />
+            <div class="form-tip">例如: https://gitlab.example.com</div>
+          </el-form-item>
+          <el-form-item label="GitLab Token">
+            <el-input
+              v-model="syncForm.gitlab_token"
+              type="password"
+              placeholder="选填，默认从系统环境变量读取"
+              show-password
+            />
+            <div class="form-tip">需要有访问项目/组织成员的权限</div>
+          </el-form-item>
+        </el-form>
+      </div>
+
+      <template #footer>
+        <el-button @click="syncDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="syncLoading" @click="handleSyncFromGitLab">开始同步</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -128,6 +182,7 @@ import {
   deleteTeam,
   addTeamMembers,
   removeTeamMember,
+  syncTeamFromGitLab,
   type Team
 } from '@/api/teams'
 
@@ -151,6 +206,17 @@ const editForm = reactive({
 const membersDialogVisible = ref(false)
 const currentTeam = ref<Team | null>(null)
 const memberInput = ref('')
+
+const syncDialogVisible = ref(false)
+const syncLoading = ref(false)
+const syncFormRef = ref<FormInstance>()
+const syncForm = reactive({
+  source_type: 'project' as 'project' | 'group',
+  source_id: '',
+  gitlab_url: '',
+  gitlab_token: '',
+  merge_strategy: 'replace' as 'replace' | 'merge'
+})
 
 const formRules: FormRules = {
   name: [
@@ -179,6 +245,15 @@ const formRules: FormRules = {
       }
     }
   ]
+}
+
+const syncFormRules: FormRules = {
+  source_type: [{ required: true, message: '请选择来源类型', trigger: 'change' }],
+  source_id: [
+    { required: true, message: '请输入项目/组织 ID 或路径', trigger: 'blur' },
+    { min: 1, message: 'ID 不能为空', trigger: 'blur' }
+  ],
+  merge_strategy: [{ required: true, message: '请选择合并策略', trigger: 'change' }]
 }
 
 const memberDialogTitle = computed(() => {
@@ -328,6 +403,65 @@ const handleRemoveMember = async (author: string) => {
   }
 }
 
+const openSyncDialog = (team: Team) => {
+  currentTeam.value = { ...team }
+  Object.assign(syncForm, {
+    source_type: 'project',
+    source_id: '',
+    gitlab_url: '',
+    gitlab_token: '',
+    merge_strategy: 'replace'
+  })
+  syncDialogVisible.value = true
+}
+
+const handleSyncFromGitLab = async () => {
+  if (!currentTeam.value || !syncFormRef.value) {
+    return
+  }
+
+  await syncFormRef.value.validate(async (valid) => {
+    if (!valid) {
+      return
+    }
+
+    const confirmMsg =
+      syncForm.merge_strategy === 'replace'
+        ? `确定从 GitLab ${syncForm.source_type === 'project' ? '项目' : '组织'} "${syncForm.source_id}" 同步成员吗？\n\n注意：替换模式将清空当前所有成员，请谨慎操作。`
+        : `确定从 GitLab ${syncForm.source_type === 'project' ? '项目' : '组织'} "${syncForm.source_id}" 同步成员吗？\n\n合并模式将保留现有成员，仅添加新成员。`
+
+    try {
+      await ElMessageBox.confirm(confirmMsg, '确认同步', {
+        confirmButtonText: '确定同步',
+        cancelButtonText: '取消',
+        type: 'warning',
+        dangerouslyUseHTMLString: false
+      })
+
+      syncLoading.value = true
+      const result = await syncTeamFromGitLab(currentTeam.value!.id, {
+        source_type: syncForm.source_type,
+        source_id: syncForm.source_id.trim(),
+        gitlab_url: syncForm.gitlab_url.trim() || undefined,
+        gitlab_token: syncForm.gitlab_token.trim() || undefined,
+        merge_strategy: syncForm.merge_strategy
+      })
+
+      currentTeam.value = result.team
+      await loadTeams()
+      syncDialogVisible.value = false
+      ElMessage.success({
+        message: `同步成功！新增 ${result.added} 人，移除 ${result.removed} 人，当前共 ${result.total} 人`,
+        duration: 5000
+      })
+    } catch (error) {
+      // 用户取消或同步失败（错误已由拦截器处理）
+    } finally {
+      syncLoading.value = false
+    }
+  })
+}
+
 onMounted(() => {
   loadTeams()
 })
@@ -395,5 +529,12 @@ onMounted(() => {
 
 .member-form {
   margin-top: 16px;
+}
+
+.form-tip {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.5;
 }
 </style>

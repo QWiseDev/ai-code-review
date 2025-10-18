@@ -857,6 +857,52 @@ def remove_team_member(team_id: int, author: str):
         return jsonify({'success': False, 'message': 'Failed to remove team member'}), 500
 
 
+@api_app.route('/api/teams/<int:team_id>/sync-from-gitlab', methods=['POST'])
+@jwt_required()
+def sync_team_from_gitlab(team_id: int):
+    """从 GitLab 同步团队成员"""
+    try:
+        data = request.get_json() or {}
+        source_type = data.get('source_type', 'project')
+        source_id = (data.get('source_id') or '').strip()
+        gitlab_url = data.get('gitlab_url')
+        gitlab_token = data.get('gitlab_token')
+        merge_strategy = data.get('merge_strategy', 'replace')
+
+        # 验证必填参数
+        if not source_id:
+            return jsonify({'success': False, 'message': 'GitLab 项目/组织 ID 不能为空'}), 400
+
+        if source_type not in ['project', 'group']:
+            return jsonify({'success': False, 'message': "来源类型必须是 'project' 或 'group'"}), 400
+
+        if merge_strategy not in ['replace', 'merge']:
+            return jsonify({'success': False, 'message': "合并策略必须是 'replace' 或 'merge'"}), 400
+
+        # 执行同步
+        result = ReviewService.sync_team_from_gitlab(
+            team_id=team_id,
+            source_type=source_type,
+            source_id=source_id,
+            gitlab_url=gitlab_url,
+            gitlab_token=gitlab_token,
+            merge_strategy=merge_strategy
+        )
+
+        logger.info(f"团队 {team_id} 从 GitLab 同步成功：新增 {result['added']} 人，移除 {result['removed']} 人")
+        return jsonify({
+            'success': True,
+            'data': result,
+            'message': f"同步成功：新增 {result['added']} 人，移除 {result['removed']} 人，当前共 {result['total']} 人"
+        }), 200
+    except ValueError as e:
+        logger.warning(f"Sync team from GitLab validation error: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Sync team from GitLab error: {e}")
+        return jsonify({'success': False, 'message': f'同步失败: {str(e)}'}), 500
+
+
 def setup_scheduler():
     """
     配置并启动定时任务调度器
